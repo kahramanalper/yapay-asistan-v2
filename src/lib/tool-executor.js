@@ -157,9 +157,9 @@ async function handleIslemeAl({ parcaNo, projeAdi }) {
   const bomRecord = bomRecords[0];
   const results = { basarili: true, adimlar: [] };
 
-  // 2. BOM durumunu güncelle
-  await updateRecord("BOM", bomRecord.id, { Durum: "Sat\u0131n Almada" });
-  results.adimlar.push("BOM durumu: Satın Almada");
+  // 2. BOM durumunu güncelle (ana parça imalata gidiyor)
+  await updateRecord("BOM", bomRecord.id, { Durum: "\u0130malatta" });
+  results.adimlar.push("BOM durumu: İmalatta");
 
   // 3. Hammadde (HM-) kaydı BOM'a ekle (BOM'da Tanım yok!)
   const hmParcaNo = `HM-${parcaNo}`;
