@@ -7,46 +7,29 @@ import {
   deleteRecord,
 } from "./airtable.js";
 
-// Tablo adı çözümleme
 function resolveTableName(input) {
   const map = {
-    projeler: "Projeler",
-    proje: "Projeler",
-    bom: "BOM",
-    "malzeme listesi": "BOM",
-    "satın alma": "Sat\u0131n Alma",
-    "satin alma": "Sat\u0131n Alma",
-    sa: "Sat\u0131n Alma",
+    projeler: "Projeler", proje: "Projeler",
+    bom: "BOM", "malzeme listesi": "BOM",
+    "satın alma": "Sat\u0131n Alma", "satin alma": "Sat\u0131n Alma", sa: "Sat\u0131n Alma",
     imalat: "\u0130malat",
-    "imalat süre": "\u0130malat S\u00fcre Ar\u015fivi",
-    "süre arşivi": "\u0130malat S\u00fcre Ar\u015fivi",
-    kalite: "Kalite Kontrol",
-    "kalite kontrol": "Kalite Kontrol",
-    kk: "Kalite Kontrol",
-    depo: "Depo",
-    stok: "Depo",
+    "imalat süre": "\u0130malat S\u00fcre Ar\u015fivi", "süre arşivi": "\u0130malat S\u00fcre Ar\u015fivi",
+    kalite: "Kalite Kontrol", "kalite kontrol": "Kalite Kontrol", kk: "Kalite Kontrol",
+    depo: "Depo", stok: "Depo",
     "depo rezervasyon": "Depo Rezervasyon Alanlar",
-    teklifler: "Teklifler",
-    teklif: "Teklifler",
-    "tedarikçiler": "Tedarik\u00e7iler",
-    tedarikciler: "Tedarik\u00e7iler",
-    "dökümanlar": "D\u00f6k\u00fcmanlar",
-    dokumanlar: "D\u00f6k\u00fcmanlar",
-    "görevler": "G\u00f6revler",
-    gorevler: "G\u00f6revler",
-    notlar: "Notlar",
-    not: "Notlar",
-    bildirimler: "Bildirimler",
-    bildirim: "Bildirimler",
-    "kullanıcılar": "Kullan\u0131c\u0131lar",
-    kullanicilar: "Kullan\u0131c\u0131lar",
+    teklifler: "Teklifler", teklif: "Teklifler",
+    "tedarikçiler": "Tedarik\u00e7iler", tedarikciler: "Tedarik\u00e7iler",
+    "dökümanlar": "D\u00f6k\u00fcmanlar", dokumanlar: "D\u00f6k\u00fcmanlar",
+    "görevler": "G\u00f6revler", gorevler: "G\u00f6revler", "görev": "G\u00f6revler",
+    notlar: "Notlar", not: "Notlar",
+    bildirimler: "Bildirimler", bildirim: "Bildirimler",
+    "kullanıcılar": "Kullan\u0131c\u0131lar", kullanicilar: "Kullan\u0131c\u0131lar",
     "parça kuralları": "Par\u00e7a Kurallar\u0131",
     "tedarik kuralları": "Tedarik Kurallar\u0131",
     test: "Test",
-    "müşteriler": "M\u00fc\u015fteriler",
-    musteriler: "M\u00fc\u015fteriler",
+    "müşteriler": "M\u00fc\u015fteriler", musteriler: "M\u00fc\u015fteriler",
     "sohbet özetleri": "Sohbet \u00d6zetleri",
-    token: "TokenKullan\u0131m",
+    token: "TokenKullanim", tokenkullanim: "TokenKullanim",
     ayarlar: "Ayarlar",
   };
   const key = input.toLowerCase().trim();
@@ -63,10 +46,10 @@ export async function executeTool(toolName, toolInput) {
       case "parca_nerede": return await handleParcaNerede(toolInput);
       case "isleme_al": return await handleIslemeAl(toolInput);
       case "durum_degistir": return await handleDurumDegistir(toolInput);
-      default: return { error: `Bilinmeyen araç: ${toolName}` };
+      default: return { basarili: false, error: "Bilinmeyen araç: " + toolName };
     }
   } catch (err) {
-    return { error: `HATA: ${err.message}` };
+    return { basarili: false, error: "HATA: " + err.message };
   }
 }
 
@@ -102,7 +85,7 @@ async function handleUpdate({ tablo, kayitId, filtre, alanlar }) {
   }
   if (filtre) {
     const records = await listRecords(tableName, { filterByFormula: filtre });
-    if (records.length === 0) return { basarili: false, error: "Kayıt bulunamadı", filtre };
+    if (records.length === 0) return { basarili: false, error: "Kayıt bulunamadı" };
     if (records.length === 1) {
       const result = await updateRecord(tableName, records[0].id, alanlar);
       return { basarili: true, guncellenen: result };
@@ -134,8 +117,7 @@ async function handleParcaNerede({ parcaNo, projeAdi }) {
   ]);
 
   return {
-    basarili: true,
-    parcaNo,
+    basarili: true, parcaNo,
     bom: bom.length > 0 ? bom : null,
     satinAlma: sa.length > 0 ? sa : null,
     imalat: imalat.length > 0 ? imalat : null,
@@ -145,58 +127,59 @@ async function handleParcaNerede({ parcaNo, projeAdi }) {
 }
 
 async function handleIslemeAl({ parcaNo, projeAdi }) {
-  // 1. BOM'da parçayı bul
   const bomRecords = await listRecords("BOM", {
     filterByFormula: `AND({Parça No}="${parcaNo}",{Proje Adı}="${projeAdi}")`,
   });
-
   if (bomRecords.length === 0) {
-    return { basarili: false, error: `${parcaNo} BOM'da bulunamadı (Proje: ${projeAdi})` };
+    return { basarili: false, error: parcaNo + " BOM'da bulunamadı (Proje: " + projeAdi + ")" };
   }
 
-  const bomRecord = bomRecords[0];
+  const bom = bomRecords[0];
   const results = { basarili: true, adimlar: [] };
 
-  // 2. BOM durumunu güncelle (ana parça imalata gidiyor)
-  await updateRecord("BOM", bomRecord.id, { Durum: "\u0130malatta" });
-  results.adimlar.push("BOM durumu: İmalatta");
+  // 1. BOM durumu → İmalatta
+  await updateRecord("BOM", bom.id, { Durum: "\u0130malatta" });
+  results.adimlar.push("BOM: İmalatta");
 
-  // 3. Hammadde (HM-) kaydı BOM'a ekle (BOM'da Tanım yok!)
-  const hmParcaNo = `HM-${parcaNo}`;
+  // 2. HM- kaydı BOM'a ekle
+  const hmNo = "HM-" + parcaNo;
   await createRecord("BOM", {
-    "Par\u00e7a No": hmParcaNo,
+    "Par\u00e7a No": hmNo,
+    "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
     Tip: "Hammadde",
-    Miktar: bomRecord.Miktar || 1,
-    Malzeme: bomRecord.Malzeme || "",
+    Miktar: bom.Miktar || 1,
+    Malzeme: bom.Malzeme || "",
     Durum: "Sat\u0131n Almada",
     "Proje Ad\u0131": projeAdi,
   });
-  results.adimlar.push(`HM kaydı eklendi: ${hmParcaNo}`);
+  results.adimlar.push("BOM'a " + hmNo + " eklendi");
 
-  // 4. Hammadde SA'ya ekle (SA'da Tanım var)
+  // 3. HM- SA'ya ekle
   await createRecord("Sat\u0131n Alma", {
-    "Par\u00e7a No": hmParcaNo,
-    "Tan\u0131m": `${parcaNo} Hammaddesi`,
-    Miktar: bomRecord.Miktar || 1,
+    "Par\u00e7a No": hmNo,
+    "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
+    Miktar: bom.Miktar || 1,
     Durum: "Bekliyor",
     "Proje Ad\u0131": projeAdi,
-    Kaynak: "Genel",
+    Kaynak: "BOM",
   });
-  results.adimlar.push("SA kaydı: Bekliyor");
+  results.adimlar.push("SA'ya " + hmNo + " eklendi: Bekliyor");
 
-  // 5. İmalat kaydı aç
+  // 4. İmalat kaydı aç
   let asama = "Torna";
   if (parcaNo.startsWith("F-")) asama = "Freze";
-  else if (parcaNo.startsWith("L-")) asama = "Lazer";
+  else if (parcaNo.startsWith("L-")) asama = "Lazer Kesim";
   else if (parcaNo.startsWith("K-")) asama = "Kaynak";
+  else if (parcaNo.startsWith("M-")) asama = "Alt Montaj";
 
   await createRecord("\u0130malat", {
     "Par\u00e7a No": parcaNo,
+    "Tan\u0131m": bom["Tan\u0131m"] || "",
     "Proje Ad\u0131": projeAdi,
     "A\u015fama": asama,
     Durum: "Hammadde Bekliyor",
   });
-  results.adimlar.push(`İmalat kaydı: Hammadde Bekliyor (${asama})`);
+  results.adimlar.push("İmalat kaydı: Hammadde Bekliyor (" + asama + ")");
 
   return results;
 }
@@ -209,7 +192,7 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
 
   const records = await listRecords(tableName, { filterByFormula: filter });
   if (records.length === 0) {
-    return { basarili: false, error: `${parcaNo} ${tableName}'da bulunamadı` };
+    return { basarili: false, error: parcaNo + " " + tableName + "'da bulunamadı" };
   }
 
   const record = records[0];
@@ -217,45 +200,53 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
   if (ekBilgi) Object.assign(updateFields, ekBilgi);
 
   await updateRecord(tableName, record.id, updateFields);
-  const results = { basarili: true, adimlar: [`${tableName}: ${yeniDurum}`] };
+  const results = { basarili: true, adimlar: [tableName + ": " + yeniDurum] };
 
   // SA "Teslim Alındı"
   if (tableName === "Sat\u0131n Alma" && yeniDurum === "Teslim Al\u0131nd\u0131") {
+    const proje = projeAdi || record["Proje Ad\u0131"] || "";
     await createRecord("Kalite Kontrol", {
       "Par\u00e7a No": parcaNo,
+      "Tan\u0131m": record["Tan\u0131m"] || "",
       "Sonu\u00e7": "Bekliyor",
-      "Proje Ad\u0131": projeAdi || record["Proje Ad\u0131"] || "",
+      Durum: "Aktif",
+      "Proje Ad\u0131": proje,
+      "Kay\u0131t Tarihi": new Date().toISOString().split("T")[0],
     });
     results.adimlar.push("KK kaydı: Bekliyor");
 
-    const bomFilter = projeAdi
-      ? `AND({Parça No}="${parcaNo}",{Proje Adı}="${projeAdi}")`
+    const bomFilter = proje
+      ? `AND({Parça No}="${parcaNo}",{Proje Adı}="${proje}")`
       : `{Parça No}="${parcaNo}"`;
     const bomRecs = await listRecords("BOM", { filterByFormula: bomFilter }).catch(() => []);
     if (bomRecs.length > 0) {
-      await updateRecord("BOM", bomRecs[0].id, { Durum: "Teslim Al\u0131nd\u0131" });
-      results.adimlar.push("BOM: Teslim Alındı");
+      await updateRecord("BOM", bomRecs[0].id, { Durum: "Kalite Kontrolde" });
+      results.adimlar.push("BOM: Kalite Kontrolde");
     }
 
     if (parcaNo.startsWith("HM-")) {
       const anaParca = parcaNo.replace("HM-", "");
-      const imalatFilter = projeAdi
-        ? `AND({Parça No}="${anaParca}",{Proje Adı}="${projeAdi}")`
+      const imalatFilter = proje
+        ? `AND({Parça No}="${anaParca}",{Proje Adı}="${proje}")`
         : `{Parça No}="${anaParca}"`;
       const imalatRecs = await listRecords("\u0130malat", { filterByFormula: imalatFilter }).catch(() => []);
       if (imalatRecs.length > 0) {
         await updateRecord("\u0130malat", imalatRecs[0].id, { Durum: "Devam Ediyor" });
-        results.adimlar.push(`İmalat: ${anaParca} Devam Ediyor`);
+        results.adimlar.push("İmalat: " + anaParca + " Devam Ediyor");
       }
     }
   }
 
   // İmalat "Tamamlandı"
   if (tableName === "\u0130malat" && yeniDurum === "Tamamland\u0131") {
+    const proje = projeAdi || record["Proje Ad\u0131"] || "";
     await createRecord("Kalite Kontrol", {
       "Par\u00e7a No": parcaNo,
+      "Tan\u0131m": record["Tan\u0131m"] || "",
       "Sonu\u00e7": "Bekliyor",
-      "Proje Ad\u0131": projeAdi || record["Proje Ad\u0131"] || "",
+      Durum: "Aktif",
+      "Proje Ad\u0131": proje,
+      "Kay\u0131t Tarihi": new Date().toISOString().split("T")[0],
     });
     results.adimlar.push("KK kaydı: Bekliyor");
     await updateRecord("\u0130malat", record.id, {
@@ -263,31 +254,32 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
     });
   }
 
-  // KK "Onay"
-  if (tableName === "Kalite Kontrol" && yeniDurum === "Onay") {
-    await updateRecord("Kalite Kontrol", record.id, { "Sonu\u00e7": "Onay" });
+  // KK "Onaylandı"
+  if (tableName === "Kalite Kontrol" && (yeniDurum === "Onayland\u0131" || yeniDurum === "Onaylandı")) {
+    await updateRecord("Kalite Kontrol", record.id, { "Sonu\u00e7": "Onayland\u0131", Durum: "Tamamland\u0131" });
     const depoRecs = await listRecords("Depo", { filterByFormula: `{Parça No}="${parcaNo}"` }).catch(() => []);
     if (depoRecs.length > 0) {
-      const mevcutStok = depoRecs[0]["Miktar"] || 0;
-      await updateRecord("Depo", depoRecs[0].id, { Miktar: mevcutStok + 1 });
+      const stok = depoRecs[0]["Miktar"] || 0;
+      await updateRecord("Depo", depoRecs[0].id, { Miktar: stok + 1, "Son G\u00fcncelleme": new Date().toISOString().split("T")[0] });
       results.adimlar.push("Depo stoku güncellendi");
     } else {
-      await createRecord("Depo", { "Par\u00e7a No": parcaNo, Miktar: 1 });
+      await createRecord("Depo", { "Par\u00e7a No": parcaNo, "Tan\u0131m": record["Tan\u0131m"] || "", Miktar: 1, "Son G\u00fcncelleme": new Date().toISOString().split("T")[0] });
       results.adimlar.push("Depo kaydı oluşturuldu");
     }
-    const bomFilter2 = projeAdi
-      ? `AND({Parça No}="${parcaNo}",{Proje Adı}="${projeAdi}")`
+    const proje = projeAdi || record["Proje Ad\u0131"] || "";
+    const bomFilter = proje
+      ? `AND({Parça No}="${parcaNo}",{Proje Adı}="${proje}")`
       : `{Parça No}="${parcaNo}"`;
-    const bomRecs2 = await listRecords("BOM", { filterByFormula: bomFilter2 }).catch(() => []);
-    if (bomRecs2.length > 0) {
-      await updateRecord("BOM", bomRecs2[0].id, { Durum: "Depoda" });
+    const bomRecs = await listRecords("BOM", { filterByFormula: bomFilter }).catch(() => []);
+    if (bomRecs.length > 0) {
+      await updateRecord("BOM", bomRecs[0].id, { Durum: "Depoda" });
       results.adimlar.push("BOM: Depoda");
     }
   }
 
-  // KK "Red"
-  if (tableName === "Kalite Kontrol" && yeniDurum === "Red") {
-    await updateRecord("Kalite Kontrol", record.id, { "Sonu\u00e7": "Red" });
+  // KK "Reddedildi"
+  if (tableName === "Kalite Kontrol" && (yeniDurum === "Reddedildi" || yeniDurum === "Reddedildi")) {
+    await updateRecord("Kalite Kontrol", record.id, { "Sonu\u00e7": "Reddedildi", Durum: "Tamamland\u0131" });
     results.adimlar.push("⚠️ Parça reddedildi");
   }
 
