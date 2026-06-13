@@ -130,12 +130,16 @@ Tedarik yönü çözerken (BOM'dan SA'ya veya İmalat'a yönlendirme): Tedarik K
 
 ## ZİNCİR TEPKİMELER
 
-### İşleme Al (Hızlı İmalat)
-1. BOM'a parçayı ekle/bul (Tip: Parça Kuralları tablosundan, Durum: İmalatta)
-2. Hammadde kaydı BOM'a ekle (Tip: Hammadde, Durum: Satın Almada). Hammadde kod konvansiyonu Parça Kuralları tablosundan çözülür.
-3. Hammadde SA'ya ekle (Durum: Bekliyor, Kaynak: BOM)
-4. İmalat kaydı aç (Durum: Hammadde Bekliyor, Aşama: Tip'e göre)
-5. Mükerrer kontrolü: aynı Parça No+Proje varsa atla
+### İşleme Al (Hızlı İmalat) — isleme_al aracını kullan
+Bu işlemi ASLA elle yapma. Mutlaka isleme_al aracını çağır (parcaNo + projeAdi yeterli).
+Araç içinde otomatik olarak şu mantık çalışır:
+1. BOM'dan parçanın Tip'i okunur.
+2. Tedarik Kuralları tablosundan o Tip'in Yöntem'i okunur (yoksa varsayılan: Standart Parça→Satın Alma, Montaj→Montaj, diğer→İmalat).
+3. Yönteme göre 3 farklı yol:
+   - **İmalat (Torna/Freze/Kaynak/Lazer Kesim vb.):** BOM→İmalatta, Hammadde kaydı oluştur, SA'ya hammadde ekle, İmalat kaydı (Hammadde Bekliyor).
+   - **Satın Alma (Standart Parça):** BOM→Satın Almada, SA'ya direkt parça (Hammadde YOK, İmalat kaydı YOK).
+   - **Montaj:** BOM→İmalatta, İmalat kaydı (Aşama: Alt Montaj, Durum: Bekliyor). Hammadde YOK, SA YOK.
+4. Mükerrer kontrolü araç içinde yapılır.
 
 ### SA "Teslim Alındı"
 1. KK kaydı aç (Sonuç: Bekliyor, Durum: Aktif)
