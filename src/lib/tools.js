@@ -104,4 +104,44 @@ export const tools = [
       required: ["tablo", "parcaNo", "yeniDurum"],
     },
   },
+  {
+    name: "dosya_olustur",
+    description:
+      "Tablo veya metin verisinden indirilebilir dosya (Excel/PDF/Word) üretir. Kullanıcı 'Excel ver', 'PDF olarak ver', 'Word dosyası yap' gibi istediğinde kullan. Önce ilgili veriyi kayit_listele ile çek, sonra bu araçla dosyaya dönüştür.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tip: {
+          type: "string",
+          enum: ["excel", "pdf", "word"],
+          description: "Dosya tipi: excel (.xlsx), pdf (.pdf), word (.docx)",
+        },
+        dosyaAdi: {
+          type: "string",
+          description: "Uzantısız dosya adı (ör: 'ATLAS-001-BOM'). Asistan anlamlı bir ad uydursun.",
+        },
+        baslik: {
+          type: "string",
+          description: "Dosyanın içinde görünecek başlık (ör: 'ATLAS-001 BOM Listesi')",
+        },
+        sutunlar: {
+          type: "array",
+          items: { type: "string" },
+          description: "Tablo başlıkları (ör: ['Parça No', 'Tanım', 'Miktar', 'Tip', 'Durum'])",
+        },
+        satirlar: {
+          type: "array",
+          items: { type: "array" },
+          description:
+            "Tablo satırları. Her satır bir dizi olmalı, sütun sırasında değerler içerir. Örn: [['T-101','Mil',2,'Torna','Bekliyor'],...]",
+        },
+        metin: {
+          type: "string",
+          description:
+            "Tablo yerine düz metin döküman istenirse buraya yaz (PDF/Word için). Tablo varsa bu alanı bırakma.",
+        },
+      },
+      required: ["tip", "dosyaAdi"],
+    },
+  },
 ];
