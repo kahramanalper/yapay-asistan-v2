@@ -308,32 +308,79 @@ async function handleDosyaOlustur({ tip, dosyaAdi, baslik, sutunlar, satirlar, m
       mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
       uzanti = "xlsx";
     } else if (tip === "pdf") {
-      const PDFDocument = (await import("pdfkit")).default;
-      const doc = new PDFDocument({ size: "A4", margin: 50 });
-      const chunks = [];
-      doc.on("data", (c) => chunks.push(c));
-      const done = new Promise((resolve) => doc.on("end", resolve));
+      const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
+      const pdfDoc = await PDFDocument.create();
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      // Türkçe karakterleri ASCII'ye yaklaştır (StandardFonts WinAnsi destekler ama
+      // bazı Türkçe karakterleri tam karşılamaz; en güvenli yol replace)
+      const trToAscii = (s) => String(s ?? "")
+        .replace(/ı/g, "i").replace(/İ/g, "I")
+        .replace(/ş/g, "s").replace(/Ş/g, "S")
+        .replace(/ğ/g, "g").replace(/Ğ/g, "G")
+        .replace(/ç/g, "c").replace(/Ç/g, "C")
+        .replace(/ö/g, "o").replace(/Ö/g, "O")
+        .replace(/ü/g, "u").replace(/Ü/g, "U");
+
+      let page = pdfDoc.addPage([595, 842]); // A4
+      const pageWidth = 595;
+      const margin = 40;
+      let y = 800;
 
       if (baslik) {
-        doc.fontSize(16).text(baslik, { align: "center" });
-        doc.moveDown();
+        page.drawText(trToAscii(baslik), {
+          x: margin, y, size: 16, font: fontBold, color: rgb(0, 0, 0),
+        });
+        y -= 30;
       }
+
       if (satirlar && satirlar.length && sutunlar && sutunlar.length) {
-        // Basit tablo
-        doc.fontSize(10);
-        doc.text(sutunlar.join("  |  "));
-        doc.moveDown(0.3);
-        doc.text("─".repeat(80));
-        doc.moveDown(0.3);
+        const colCount = sutunlar.length;
+        const colWidth = (pageWidth - 2 * margin) / colCount;
+
+        // Başlık satırı
+        sutunlar.forEach((s, i) => {
+          page.drawText(trToAscii(s), {
+            x: margin + i * colWidth, y, size: 10, font: fontBold,
+          });
+        });
+        y -= 4;
+        page.drawLine({
+          start: { x: margin, y },
+          end: { x: pageWidth - margin, y },
+          thickness: 0.5,
+        });
+        y -= 14;
+
+        // Veri satırları
         for (const row of satirlar) {
-          doc.text(row.map((v) => String(v ?? "")).join("  |  "));
+          if (y < 40) {
+            page = pdfDoc.addPage([595, 842]);
+            y = 800;
+          }
+          row.forEach((v, i) => {
+            const text = trToAscii(v).slice(0, 25); // taşmayı önle
+            page.drawText(text, {
+              x: margin + i * colWidth, y, size: 9, font,
+            });
+          });
+          y -= 14;
         }
       } else if (metin) {
-        doc.fontSize(11).text(metin);
+        const lines = trToAscii(metin).split("\n");
+        for (const line of lines) {
+          if (y < 40) {
+            page = pdfDoc.addPage([595, 842]);
+            y = 800;
+          }
+          page.drawText(line.slice(0, 90), { x: margin, y, size: 11, font });
+          y -= 14;
+        }
       }
-      doc.end();
-      await done;
-      buffer = Buffer.concat(chunks);
+
+      const pdfBytes = await pdfDoc.save();
+      buffer = Buffer.from(pdfBytes);
       mime = "application/pdf";
       uzanti = "pdf";
     } else if (tip === "word") {
