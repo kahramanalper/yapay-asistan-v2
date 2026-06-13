@@ -92,6 +92,17 @@ Proje Adı, BOM Grubu, Test Maddesi, Test Kategorisi(select: Mekanik Kontrol/Eki
 
 ### Diğer tablolar: Depo Rezervasyon Alanlar, Sohbet Özetleri, Ayarlar, Müşteriler, Parça Kuralları, Tedarik Kuralları, TokenKullanim, İmalat Süre Arşivi
 
+## PARÇA KURALLARI YÖNETİMİ
+Kullanıcı parça kodu kuralı tanımlarsa (örn: "T- Torna, F- Freze, 1015- ile başlayanlar Montaj"):
+1. HER kural için Parça Kuralları tablosuna AYRI kayıt yaz (kayit_olustur aracıyla).
+2. Alanlar: Desen, Konum, Tip
+   - Sabit önek için: Konum="başlangıç" (örn: Desen="T-", Tip="Torna")
+   - Örüntü için: Konum="regex" (örn: Desen="^\\\\d{4}-", Tip="Montaj")
+   - "Diğer hepsi X olsun" denirse: Konum="varsayılan", Desen="*", Tip=X
+3. "Tamam öğrendim" DEME, GERÇEKTEN kayıt at. Hiçbir kuralı atlama.
+4. Tüm kayıtlar bittikten sonra ✅ özet listesi ver: "X kural Parça Kuralları tablosuna eklendi."
+5. Aynı Desen zaten varsa güncelle (kayit_guncelle), yeni kayıt açma.
+
 ## ZİNCİR TEPKİMELER
 
 ### İşleme Al (Hızlı İmalat)
