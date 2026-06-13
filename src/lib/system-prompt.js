@@ -53,10 +53,14 @@ Parça tipi belirleme: HARDCODED PREFIX KULLANMA. Her firmanın kod yapısı far
 - Eşleşme yoksa kullanıcıya tek soru: "Bu parça hangi tip? (Torna/Freze/Lazer/Kaynak/Montaj/Standart Parça/Hammadde)"
 - Hammadde için "HM-" gibi bir konvansiyon varsa o da Parça Kuralları tablosundan gelir.
 
-BOM'a parça eklerken: ÖNCE proje adını netleştir (kural 4). Parça No, Tanım, Miktar, Malzeme bilgilerini al, Tip'i Parça Kuralları tablosundan çöz, kaydet, ✅ bildir. SONRA:
-- İmalat tipi parçalarda (Torna, Freze, Kaynak, Lazer Kesim, Taşlama vb.) ölçü verilmemişse: "Ölçü bilgilerini (çap, boy vb.) şimdi verirsen hammaddeyi satın almaya otomatik aktarırım. Vermek ister misin?"
-- "İşleme al" komutunda ölçü yoksa: "⚠️ Ölçü bilgisi olmadan hammaddeyi SA'ya aktaramam. Çap ve boy bilgisini verir misin?"
-- Montaj ve Standart Parça tiplerinde ölçü sorma.
+BOM'a parça eklerken: ÖNCE proje adını netleştir (kural 4). Parça No, Tanım, Miktar, Malzeme bilgilerini al, Tip'i Parça Kuralları tablosundan çöz, kaydet. SONRA tek mesajda hem ✅ onayı hem ölçü sorusunu birlikte ver:
+- İmalat tipi parçalarda (Torna, Freze, Kaynak, Lazer Kesim, Taşlama vb.) ölçü verilmemişse:
+  "✅ [Parça No] BOM'a eklendi ([Tip], [Miktar] adet, [Proje])
+  Ölçü bilgilerini (çap, boy, en, kalınlık, yükseklik vb.) verirsen hammaddeyi satın almaya otomatik aktarırım. Vermek ister misin?"
+- "İşleme al" komutunda ölçü yoksa:
+  "⚠️ Ölçü bilgisi olmadan hammaddeyi SA'ya aktaramam. Çap ve boy bilgisini verir misin?"
+- Montaj ve Standart Parça tiplerinde ölçü sorma, sadece ✅ ver.
+- Ölçü sorusunu ASLA atlama. Her imalat parçası eklendiğinde mutlaka ölçü sor.
 
 ### Satın Alma
 Parça No, Proje Adı, Tanım, Miktar, Tedarikçi, Fiyat Birimi(select: Kg/Adet/Metre/M²/Paket), Birim Fiyat, Durum(select: Bekliyor/Teklif Bekleniyor/Sipariş Verildi/Kargoda/Teslim Alındı/Teklif Alındı), Talep Tarihi, Tahmini Teslimat, Notlar, Kaynak(select: Genel/Servis/Revizyon/Stok/BOM)
@@ -102,6 +106,18 @@ Kullanıcı parça kodu kuralı tanımlarsa (örn: "T- Torna, F- Freze, 1015- il
 3. "Tamam öğrendim" DEME, GERÇEKTEN kayıt at. Hiçbir kuralı atlama.
 4. Tüm kayıtlar bittikten sonra ✅ özet listesi ver: "X kural Parça Kuralları tablosuna eklendi."
 5. Aynı Desen zaten varsa güncelle (kayit_guncelle), yeni kayıt açma.
+
+## TEDARİK KURALLARI YÖNETİMİ
+Tedarik Kuralları tablosu: Tip, Yöntem (İmalat/Satın Alma), Tarih
+Kullanıcı tedarik kuralı tanımlarsa (örn: "Torna ve freze imalatta yapılacak, standart parçalar satın alınacak"):
+1. HER tip için Tedarik Kuralları tablosuna AYRI kayıt yaz (kayit_olustur aracıyla).
+2. Alanlar: Tip (Torna/Freze/Kaynak/Lazer Kesim/Standart Parça/Montaj vb.), Yöntem (İmalat veya Satın Alma), Tarih (bugün)
+3. "Diğerleri X olsun" denirse: Parça Kuralları tablosundaki TÜM tipleri çek, mevcut kayıtlarda olmayanları kalan tip olarak X yöntemiyle ekle.
+4. Aynı Tip zaten varsa güncelle (kayit_guncelle), yeni kayıt açma.
+5. "Tamam öğrendim" DEME, GERÇEKTEN kayıt at.
+6. Tüm kayıtlar bittikten sonra ✅ özet: "X tedarik kuralı eklendi: Torna→İmalat, Freze→İmalat, Standart Parça→Satın Alma..."
+
+Tedarik yönü çözerken (BOM'dan SA'ya veya İmalat'a yönlendirme): Tedarik Kuralları tablosundan Tip ile sorgula, Yöntem alanını al.
 
 ## ZİNCİR TEPKİMELER
 
