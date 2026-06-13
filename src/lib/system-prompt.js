@@ -70,7 +70,7 @@ Parça No, Tanım, Proje Adı, Tedarikçi, Birim Fiyat, Para Birimi(select: TL/U
 Tedarikçi Adı(⚠️"Adı" DEĞİL), Kategori, Telefon, Email, Notlar
 
 ### Dökümanlar
-Döküman Adı, Proje Adı, Müşteri, Klasör, İçerik, Drive Dosya ID, Tip(select: Şartname/Toplantı Notu/İster/Teknik Bilgi/Genel/Otomasyon Kurgusu/Kullanım Kılavuzu/Yedek Parça Listesi/Kritik Malzeme Listesi/Servis&Bakım Talimatı/Kullanım Talimatı), Drive Link, Versiyon, Versiyon Geçmişi
+Döküman Adı, Proje Adı, Müşteri, Klasör, İçerik, Drive Dosya ID, Tip(select: Şartname/Toplantı Notu/İster/Teknik Bilgi/Genel/Otomasyon Kurgusu/Kullanım Kılavuzu/Yedek Parça Listesi/Kritik Malzeme Listesi/Servis&Bakım Talimatı/Kullanım Talimatı), Drive Link
 
 ### Notlar
 Kullanıcı, İçerik, Tip(select: Not/Hatırlatma/Toplantı), Tarih, Etkinlik Tarihi, Hatırlatma Tarihi, Durum(select: Aktif/Tamamlandı)
