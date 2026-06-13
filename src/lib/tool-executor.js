@@ -46,6 +46,7 @@ export async function executeTool(toolName, toolInput) {
       case "parca_nerede": return await handleParcaNerede(toolInput);
       case "isleme_al": return await handleIslemeAl(toolInput);
       case "durum_degistir": return await handleDurumDegistir(toolInput);
+      case "dosya_olustur": return await handleDosyaOlustur(toolInput);
       default: return { basarili: false, error: "Bilinmeyen araç: " + toolName };
     }
   } catch (err) {
@@ -284,4 +285,111 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
   }
 
   return results;
+}
+
+// ─────────────────────────────────────────────
+// DOSYA OLUŞTURMA (Excel / PDF / Word)
+// ─────────────────────────────────────────────
+async function handleDosyaOlustur({ tip, dosyaAdi, baslik, sutunlar, satirlar, metin }) {
+  try {
+    const safeAd = (dosyaAdi || "dosya").replace(/[^a-zA-Z0-9\-_çÇğĞıİöÖşŞüÜ]/g, "_");
+    let buffer, mime, uzanti;
+
+    if (tip === "excel") {
+      const XLSX = await import("xlsx");
+      const wsData = [];
+      if (baslik) wsData.push([baslik]);
+      if (sutunlar && sutunlar.length) wsData.push(sutunlar);
+      if (satirlar && satirlar.length) wsData.push(...satirlar);
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Sayfa1");
+      buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+      mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      uzanti = "xlsx";
+    } else if (tip === "pdf") {
+      const PDFDocument = (await import("pdfkit")).default;
+      const doc = new PDFDocument({ size: "A4", margin: 50 });
+      const chunks = [];
+      doc.on("data", (c) => chunks.push(c));
+      const done = new Promise((resolve) => doc.on("end", resolve));
+
+      if (baslik) {
+        doc.fontSize(16).text(baslik, { align: "center" });
+        doc.moveDown();
+      }
+      if (satirlar && satirlar.length && sutunlar && sutunlar.length) {
+        // Basit tablo
+        doc.fontSize(10);
+        doc.text(sutunlar.join("  |  "));
+        doc.moveDown(0.3);
+        doc.text("─".repeat(80));
+        doc.moveDown(0.3);
+        for (const row of satirlar) {
+          doc.text(row.map((v) => String(v ?? "")).join("  |  "));
+        }
+      } else if (metin) {
+        doc.fontSize(11).text(metin);
+      }
+      doc.end();
+      await done;
+      buffer = Buffer.concat(chunks);
+      mime = "application/pdf";
+      uzanti = "pdf";
+    } else if (tip === "word") {
+      const docxLib = await import("docx");
+      const { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel } = docxLib;
+
+      const children = [];
+      if (baslik) {
+        children.push(new Paragraph({ text: baslik, heading: HeadingLevel.HEADING_1 }));
+      }
+      if (satirlar && satirlar.length && sutunlar && sutunlar.length) {
+        const headerRow = new TableRow({
+          children: sutunlar.map(
+            (s) =>
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: String(s), bold: true })] })],
+              })
+          ),
+        });
+        const bodyRows = satirlar.map(
+          (row) =>
+            new TableRow({
+              children: row.map(
+                (v) =>
+                  new TableCell({
+                    children: [new Paragraph(String(v ?? ""))],
+                  })
+              ),
+            })
+        );
+        children.push(new Table({ rows: [headerRow, ...bodyRows] }));
+      } else if (metin) {
+        for (const line of String(metin).split("\n")) {
+          children.push(new Paragraph(line));
+        }
+      }
+      const doc = new Document({ sections: [{ children }] });
+      buffer = await Packer.toBuffer(doc);
+      mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      uzanti = "docx";
+    } else {
+      return { basarili: false, error: "Geçersiz tip. excel/pdf/word olmalı." };
+    }
+
+    const base64 = buffer.toString("base64");
+    return {
+      basarili: true,
+      dosya: {
+        ad: `${safeAd}.${uzanti}`,
+        mime,
+        base64,
+        boyut: buffer.length,
+      },
+      mesaj: `${safeAd}.${uzanti} hazırlandı (${(buffer.length / 1024).toFixed(1)} KB)`,
+    };
+  } catch (err) {
+    return { basarili: false, error: "Dosya oluşturma hatası: " + err.message };
+  }
 }
