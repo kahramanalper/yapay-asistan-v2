@@ -2,6 +2,55 @@
 
 import { useState, useRef, useEffect } from "react";
 
+function DosyaIndir({ dosya }) {
+  function indir() {
+    try {
+      const byteChars = atob(dosya.base64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: dosya.mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = dosya.ad;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Dosya indirilemedi: " + err.message);
+    }
+  }
+
+  const ikon = dosya.ad.endsWith(".xlsx") ? "📊"
+             : dosya.ad.endsWith(".pdf") ? "📄"
+             : dosya.ad.endsWith(".docx") ? "📝" : "📎";
+
+  return (
+    <button onClick={indir} className="dosya-indir-btn" style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "8px 14px",
+      marginTop: 8,
+      border: "1px solid #d0d7de",
+      borderRadius: 8,
+      background: "#f6f8fa",
+      cursor: "pointer",
+      fontSize: 14,
+    }}>
+      <span>{ikon}</span>
+      <span>{dosya.ad}</span>
+      <span style={{ color: "#656d76", fontSize: 12 }}>
+        ({(dosya.boyut / 1024).toFixed(1)} KB) ↓
+      </span>
+    </button>
+  );
+}
+
 export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -63,6 +112,7 @@ export default function Chat() {
             role: "assistant",
             content: data.message,
             model: data.model,
+            dosyalar: data.dosyalar || [],
           },
         ]);
       }
@@ -126,6 +176,13 @@ export default function Chat() {
                   <p key={j}>{line}</p>
                 ))}
               </div>
+              {msg.dosyalar && msg.dosyalar.length > 0 && (
+                <div className="dosyalar">
+                  {msg.dosyalar.map((d, k) => (
+                    <DosyaIndir key={k} dosya={d} />
+                  ))}
+                </div>
+              )}
               {msg.model && (
                 <span className="model-badge">
                   {msg.model.includes("haiku") ? "⚡" : "🧠"}{" "}
