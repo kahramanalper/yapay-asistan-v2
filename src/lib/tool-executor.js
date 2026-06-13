@@ -136,53 +136,147 @@ async function handleIslemeAl({ parcaNo, projeAdi }) {
   }
 
   const bom = bomRecords[0];
-  const results = { basarili: true, adimlar: [] };
+  const tip = bom.Tip || "";
+  const results = { basarili: true, parcaNo, tip, adimlar: [] };
 
-  // 1. BOM durumu → İmalatta
-  await updateRecord("BOM", bom.id, { Durum: "\u0130malatta" });
-  results.adimlar.push("BOM: İmalatta");
+  // ─────────────────────────────────────────────
+  // 1. Tedarik Kuralları tablosundan Yöntem'i çöz
+  // ─────────────────────────────────────────────
+  let yontem = null;
+  try {
+    const kurallar = await listRecords("Tedarik Kurallar\u0131", {
+      filterByFormula: `{Tip}="${tip}"`,
+    });
+    if (kurallar.length > 0) {
+      yontem = kurallar[0]["Y\u00f6ntem"] || kurallar[0].Yontem || null;
+    }
+  } catch (e) {
+    // Tablo veya alan yoksa varsayılana düş
+  }
 
-  // 2. HM- kaydı BOM'a ekle
-  const hmNo = "HM-" + parcaNo;
-  await createRecord("BOM", {
-    "Par\u00e7a No": hmNo,
-    "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
-    Tip: "Hammadde",
-    Miktar: bom.Miktar || 1,
-    Malzeme: bom.Malzeme || "",
-    Durum: "Sat\u0131n Almada",
-    "Proje Ad\u0131": projeAdi,
-  });
-  results.adimlar.push("BOM'a " + hmNo + " eklendi");
+  // Varsayılan: Tedarik Kuralı yoksa Tip'e göre karar
+  if (!yontem) {
+    if (tip === "Standart Parça") yontem = "Satın Alma";
+    else if (tip === "Montaj") yontem = "Montaj";
+    else yontem = "İmalat"; // Torna, Freze, Kaynak, Lazer Kesim, vb.
+  }
 
-  // 3. HM- SA'ya ekle
-  await createRecord("Sat\u0131n Alma", {
-    "Par\u00e7a No": hmNo,
-    "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
-    Miktar: bom.Miktar || 1,
-    Durum: "Bekliyor",
-    "Proje Ad\u0131": projeAdi,
-    Kaynak: "BOM",
-  });
-  results.adimlar.push("SA'ya " + hmNo + " eklendi: Bekliyor");
+  results.yontem = yontem;
 
-  // 4. İmalat kaydı aç
-  let asama = "Torna";
-  if (parcaNo.startsWith("F-")) asama = "Freze";
-  else if (parcaNo.startsWith("L-")) asama = "Lazer Kesim";
-  else if (parcaNo.startsWith("K-")) asama = "Kaynak";
-  else if (parcaNo.startsWith("M-")) asama = "Alt Montaj";
+  // ─────────────────────────────────────────────
+  // YOL A — Yöntem: İmalat (Torna, Freze, Kaynak, Lazer Kesim...)
+  // ─────────────────────────────────────────────
+  if (yontem === "\u0130malat" || yontem === "İmalat" || yontem === "Imalat") {
+    // 1. BOM durumu → İmalatta
+    await updateRecord("BOM", bom.id, { Durum: "\u0130malatta" });
+    results.adimlar.push("BOM: İmalatta");
 
-  await createRecord("\u0130malat", {
-    "Par\u00e7a No": parcaNo,
-    "Tan\u0131m": bom["Tan\u0131m"] || "",
-    "Proje Ad\u0131": projeAdi,
-    "A\u015fama": asama,
-    Durum: "Hammadde Bekliyor",
-  });
-  results.adimlar.push("İmalat kaydı: Hammadde Bekliyor (" + asama + ")");
+    // 2. HM- kaydı BOM'a ekle
+    const hmNo = "HM-" + parcaNo;
+    await createRecord("BOM", {
+      "Par\u00e7a No": hmNo,
+      "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
+      Tip: "Hammadde",
+      Miktar: bom.Miktar || 1,
+      Malzeme: bom.Malzeme || "",
+      Durum: "Sat\u0131n Almada",
+      "Proje Ad\u0131": projeAdi,
+    });
+    results.adimlar.push("BOM'a " + hmNo + " eklendi");
 
-  return results;
+    // 3. HM- SA'ya ekle
+    await createRecord("Sat\u0131n Alma", {
+      "Par\u00e7a No": hmNo,
+      "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
+      Miktar: bom.Miktar || 1,
+      Durum: "Bekliyor",
+      "Proje Ad\u0131": projeAdi,
+      Kaynak: "BOM",
+    });
+    results.adimlar.push("SA'ya " + hmNo + " eklendi: Bekliyor");
+
+    // 4. İmalat kaydı aç — aşamayı Tip'ten çöz
+    let asama = "Torna"; // varsayılan
+    const tipLower = tip.toLowerCase();
+    if (tipLower.includes("freze") && !tipLower.includes("torna")) asama = "Freze";
+    else if (tipLower.includes("torna") && tipLower.includes("freze")) asama = "Torna"; // Torna&Freze → önce Torna
+    else if (tipLower.includes("lazer")) asama = "Lazer Kesim";
+    else if (tipLower.includes("kaynak")) asama = "Kaynak";
+    else if (tipLower.includes("torna")) asama = "Torna";
+    else if (tipLower.includes("ta\u015flama")) asama = "Taşlama";
+
+    await createRecord("\u0130malat", {
+      "Par\u00e7a No": parcaNo,
+      "Tan\u0131m": bom["Tan\u0131m"] || "",
+      "Proje Ad\u0131": projeAdi,
+      "A\u015fama": asama,
+      Durum: "Hammadde Bekliyor",
+    });
+    results.adimlar.push("İmalat kaydı: Hammadde Bekliyor (" + asama + ")");
+
+    return results;
+  }
+
+  // ─────────────────────────────────────────────
+  // YOL B — Yöntem: Satın Alma (Standart Parça)
+  // Hammadde yok, İmalat kaydı yok. Sadece SA'ya direkt parça.
+  // ─────────────────────────────────────────────
+  if (yontem === "Sat\u0131n Alma" || yontem === "Satın Alma" || yontem === "Satin Alma") {
+    // 1. BOM durumu → Satın Almada
+    await updateRecord("BOM", bom.id, { Durum: "Sat\u0131n Almada" });
+    results.adimlar.push("BOM: Satın Almada");
+
+    // 2. SA tablosunda zaten var mı kontrol et
+    const mevcutSA = await listRecords("Sat\u0131n Alma", {
+      filterByFormula: `AND({Parça No}="${parcaNo}",{Proje Adı}="${projeAdi}")`,
+    }).catch(() => []);
+
+    if (mevcutSA.length > 0) {
+      results.adimlar.push("SA'da " + parcaNo + " zaten var, atlandı");
+    } else {
+      // 3. SA'ya direkt parça (hammadde değil, parça)
+      await createRecord("Sat\u0131n Alma", {
+        "Par\u00e7a No": parcaNo,
+        "Tan\u0131m": bom["Tan\u0131m"] || "",
+        Miktar: bom.Miktar || 1,
+        Durum: "Bekliyor",
+        "Proje Ad\u0131": projeAdi,
+        Kaynak: "BOM",
+      });
+      results.adimlar.push("SA'ya " + parcaNo + " eklendi: Bekliyor");
+    }
+
+    return results;
+  }
+
+  // ─────────────────────────────────────────────
+  // YOL C — Tip: Montaj
+  // Hammadde yok, SA yok. Sadece BOM ve İmalat kaydı.
+  // ─────────────────────────────────────────────
+  if (yontem === "Montaj" || tip === "Montaj") {
+    // 1. BOM durumu → İmalatta (montaj da bir tür imalat)
+    await updateRecord("BOM", bom.id, { Durum: "\u0130malatta" });
+    results.adimlar.push("BOM: İmalatta");
+
+    // 2. İmalat kaydı aç (varsayılan Alt Montaj — kullanıcı sonra değiştirebilir)
+    await createRecord("\u0130malat", {
+      "Par\u00e7a No": parcaNo,
+      "Tan\u0131m": bom["Tan\u0131m"] || "",
+      "Proje Ad\u0131": projeAdi,
+      "A\u015fama": "Alt Montaj",
+      Durum: "Bekliyor",
+    });
+    results.adimlar.push("İmalat kaydı: Bekliyor (Alt Montaj)");
+
+    return results;
+  }
+
+  // Bilinmeyen yöntem
+  return {
+    basarili: false,
+    error: `Bilinmeyen yöntem: "${yontem}". Tedarik Kuralları tablosunda Tip="${tip}" için Yöntem (İmalat/Satın Alma/Montaj) tanımlı değil.`,
+    tip, yontem,
+  };
 }
 
 async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilgi }) {
