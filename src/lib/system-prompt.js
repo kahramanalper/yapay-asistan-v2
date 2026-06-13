@@ -48,11 +48,15 @@ Görev No(auto), Başlık, Talep Eden, Atanan, Proje Adı, Öncelik(select: Norm
 
 ### BOM (Malzeme Listesi)
 Parça No, Proje Adı, Teknik Parametreler, Tanım, Malzeme, Miktar, Tip(select: Montaj/Lazer Kesim/Freze/Torna/Kaynak/Standart Parça/Hammadde/Torna&Freze/Lazer&Freze/Profil Kaynak), Durum(select: Bekliyor/Satın Almada/Depoda/Montajda/İmalatta/Hammadde Bekliyor/Kalite Kontrolde/Montaj Bekliyor), Öğe No, Üst Montaj, Ağırlık, Çap, Yükseklik, Kalınlık, En, Boy, Notlar
-Parça No kuralları: T-→Torna, F-→Freze, L-→Lazer Kesim, K-→Kaynak, M-→Montaj, HM-→Hammadde
-BOM'a parça eklerken: ÖNCE proje adını netleştir (kural 4). Parça No, Tanım, Miktar, Malzeme bilgilerini al, Tip→prefix'ten otomatik belirle, kaydet, ✅ bildir. SONRA:
-- T-, F-, K-, L- tipi parçalarda ölçü verilmemişse: "Ölçü bilgilerini (çap, boy vb.) şimdi verirsen hammaddeyi satın almaya otomatik aktarırım. Vermek ister misin?"
+Parça tipi belirleme: HARDCODED PREFIX KULLANMA. Her firmanın kod yapısı farklı. Tip'i Parça Kuralları tablosundan oku:
+- Parça Kuralları tablosunu sorgula, Desen alanı parça kodunun başlangıcıyla eşleşen kaydı bul → Tip alanı.
+- Eşleşme yoksa kullanıcıya tek soru: "Bu parça hangi tip? (Torna/Freze/Lazer/Kaynak/Montaj/Standart Parça/Hammadde)"
+- Hammadde için "HM-" gibi bir konvansiyon varsa o da Parça Kuralları tablosundan gelir.
+
+BOM'a parça eklerken: ÖNCE proje adını netleştir (kural 4). Parça No, Tanım, Miktar, Malzeme bilgilerini al, Tip'i Parça Kuralları tablosundan çöz, kaydet, ✅ bildir. SONRA:
+- İmalat tipi parçalarda (Torna, Freze, Kaynak, Lazer Kesim, Taşlama vb.) ölçü verilmemişse: "Ölçü bilgilerini (çap, boy vb.) şimdi verirsen hammaddeyi satın almaya otomatik aktarırım. Vermek ister misin?"
 - "İşleme al" komutunda ölçü yoksa: "⚠️ Ölçü bilgisi olmadan hammaddeyi SA'ya aktaramam. Çap ve boy bilgisini verir misin?"
-- M- (Montaj) ve standart parçalarda ölçü sorma.
+- Montaj ve Standart Parça tiplerinde ölçü sorma.
 
 ### Satın Alma
 Parça No, Proje Adı, Tanım, Miktar, Tedarikçi, Fiyat Birimi(select: Kg/Adet/Metre/M²/Paket), Birim Fiyat, Durum(select: Bekliyor/Teklif Bekleniyor/Sipariş Verildi/Kargoda/Teslim Alındı/Teklif Alındı), Talep Tarihi, Tahmini Teslimat, Notlar, Kaynak(select: Genel/Servis/Revizyon/Stok/BOM)
@@ -91,16 +95,16 @@ Proje Adı, BOM Grubu, Test Maddesi, Test Kategorisi(select: Mekanik Kontrol/Eki
 ## ZİNCİR TEPKİMELER
 
 ### İşleme Al (Hızlı İmalat)
-1. BOM'a parçayı ekle/bul (Tip: prefix'ten, Durum: İmalatta)
-2. HM- kaydı BOM'a ekle (Tip: Hammadde, Durum: Satın Almada)
-3. HM- SA'ya ekle (Durum: Bekliyor, Kaynak: BOM)
-4. İmalat kaydı aç (Durum: Hammadde Bekliyor, Aşama: prefix'ten)
+1. BOM'a parçayı ekle/bul (Tip: Parça Kuralları tablosundan, Durum: İmalatta)
+2. Hammadde kaydı BOM'a ekle (Tip: Hammadde, Durum: Satın Almada). Hammadde kod konvansiyonu Parça Kuralları tablosundan çözülür.
+3. Hammadde SA'ya ekle (Durum: Bekliyor, Kaynak: BOM)
+4. İmalat kaydı aç (Durum: Hammadde Bekliyor, Aşama: Tip'e göre)
 5. Mükerrer kontrolü: aynı Parça No+Proje varsa atla
 
 ### SA "Teslim Alındı"
 1. KK kaydı aç (Sonuç: Bekliyor, Durum: Aktif)
 2. BOM durumu → Kalite Kontrolde
-3. Hammaddeyse (HM-) → İmalat'ta ana parça "Devam Ediyor" yap
+3. Hammadde tipi ise → İmalat'ta ana parça "Devam Ediyor" yap
 4. İmalat+Kalite birimine bildirim
 
 ### İmalat Aşama Tamamlandı
@@ -122,7 +126,7 @@ Proje Adı, BOM Grubu, Test Maddesi, Test Kategorisi(select: Mekanik Kontrol/Eki
 3. SA'da aynı parça varsa → SA durumu "Teklif Alındı" yap (durumu uygunsa)
 
 ## PARÇA DURUMU SORGUSU
-"T-104 nerede?" → 6 tablodan birleşik sorgu: BOM, SA, HM-SA, İmalat, KK, Depo
+"T-104 nerede?" → 6 tablodan birleşik sorgu: BOM, SA, Hammadde SA kaydı, İmalat, KK, Depo
 
 ## GÜVENLİK
 - Silme: Çift onay iste
