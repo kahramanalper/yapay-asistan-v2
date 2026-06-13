@@ -60,6 +60,9 @@ export async function POST(request) {
       iterasyon: 0,
     };
 
+    // Dosya çıktıları (Excel/PDF/Word) — frontend'e iletilecek
+    const dosyalar = [];
+
     async function claudeCagir(msgs, forceTool = false) {
       return anthropic.messages.create({
         model,
@@ -100,6 +103,21 @@ export async function POST(request) {
               basarili: result?.basarili !== false,
               sonucOzet: JSON.stringify(result).slice(0, 300),
             });
+
+            // Dosya çıktısı varsa yakala (Excel/PDF/Word)
+            if (result?.dosya && result.dosya.base64) {
+              dosyalar.push(result.dosya);
+              // Claude'a base64 göndermemek için tool_result'tan çıkar (token israfı önlenir)
+              const temizSonuc = { ...result };
+              delete temizSonuc.dosya;
+              temizSonuc.dosya = { ad: result.dosya.ad, boyut: result.dosya.boyut, hazirlandi: true };
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: block.id,
+                content: JSON.stringify(temizSonuc),
+              });
+              continue;
+            }
 
             toolResults.push({
               type: "tool_result",
@@ -186,6 +204,7 @@ export async function POST(request) {
       message: assistantText,
       model,
       usage: response.usage,
+      dosyalar, // ← Excel/PDF/Word çıktıları
       debug, // ← Network sekmesinden görebileceksin
     });
   } catch (error) {
