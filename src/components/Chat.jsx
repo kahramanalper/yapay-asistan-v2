@@ -51,13 +51,45 @@ function DosyaIndir({ dosya }) {
   );
 }
 
+// Yüklenen dosya rozeti (kullanıcı tarafında gösterilir)
+function YuklenenDosyaRozeti({ dosya, onSil }) {
+  const ikon = dosya.ad.match(/\.(xlsx|xls)$/i) ? "📊"
+             : dosya.ad.match(/\.csv$/i) ? "📋"
+             : dosya.ad.match(/\.pdf$/i) ? "📄"
+             : "📎";
+  return (
+    <div style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "4px 10px",
+      margin: "4px 4px 4px 0",
+      border: "1px solid #d0d7de",
+      borderRadius: 16,
+      background: "#eef6ff",
+      fontSize: 13,
+    }}>
+      <span>{ikon}</span>
+      <span>{dosya.ad}</span>
+      {onSil && (
+        <button onClick={onSil} style={{
+          border: "none", background: "transparent", cursor: "pointer",
+          color: "#656d76", fontSize: 16, padding: 0, marginLeft: 4,
+        }}>×</button>
+      )}
+    </div>
+  );
+}
+
 export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeProject, setActiveProject] = useState("");
+  const [pendingFiles, setPendingFiles] = useState([]); // gönderilmeyi bekleyen dosyalar
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -67,23 +99,59 @@ export default function Chat() {
     inputRef.current?.focus();
   }, []);
 
+  async function handleFileSelect(e) {
+    const files = Array.from(e.target.files || []);
+    for (const file of files) {
+      // Sadece izin verilen tipler
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (!["xlsx", "xls", "csv"].includes(ext)) {
+        alert(`Bu dosya tipi desteklenmiyor: .${ext}\nDesteklenen: .xlsx, .xls, .csv`);
+        continue;
+      }
+      // Dosya boyutu kontrolü (10 MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert(`${file.name} çok büyük (${(file.size/1024/1024).toFixed(1)} MB). Maksimum 10 MB.`);
+        continue;
+      }
+      // base64'e çevir
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      setPendingFiles((prev) => [...prev, {
+        ad: file.name,
+        boyut: file.size,
+        mime: file.type,
+        base64,
+      }]);
+    }
+    e.target.value = ""; // input'u temizle
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    if ((!input.trim() && pendingFiles.length === 0) || loading) return;
 
-    const userMessage = input.trim();
+    const userText = input.trim() || (pendingFiles.length > 0 ? "Bu dosyayı yükle" : "");
+    const dosyalar = pendingFiles;
     setInput("");
+    setPendingFiles([]);
 
-    // Kullanıcı mesajını ekle
+    // Kullanıcı mesajını UI'a ekle (dosya rozetleriyle)
     const newMessages = [
       ...messages,
-      { role: "user", content: userMessage },
+      {
+        role: "user",
+        content: userText,
+        ekDosyalar: dosyalar.map((d) => ({ ad: d.ad, boyut: d.boyut })),
+      },
     ];
     setMessages(newMessages);
     setLoading(true);
 
     try {
-      // API'ye Claude formatında gönder
       const apiMessages = newMessages.map((m) => ({
         role: m.role,
         content: m.content,
@@ -95,6 +163,7 @@ export default function Chat() {
         body: JSON.stringify({
           messages: apiMessages,
           activeProject,
+          yuklenenDosyalar: dosyalar, // ← yeni alan
         }),
       });
 
@@ -161,8 +230,8 @@ export default function Chat() {
               <button onClick={() => setInput("T-104 nerede?")}>
                 🔍 T-104 nerede?
               </button>
-              <button onClick={() => setInput("not al: yarın toplantı var")}>
-                📝 Not al
+              <button onClick={() => fileInputRef.current?.click()}>
+                📎 BOM Excel yükle
               </button>
             </div>
           </div>
@@ -171,6 +240,13 @@ export default function Chat() {
         {messages.map((msg, i) => (
           <div key={i} className={`message ${msg.role}`}>
             <div className="message-bubble">
+              {msg.ekDosyalar && msg.ekDosyalar.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  {msg.ekDosyalar.map((d, k) => (
+                    <YuklenenDosyaRozeti key={k} dosya={d} />
+                  ))}
+                </div>
+              )}
               <div className="message-content">
                 {msg.content.split("\n").map((line, j) => (
                   <p key={j}>{line}</p>
@@ -208,18 +284,56 @@ export default function Chat() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Pending files (gönderilmeden önce) */}
+      {pendingFiles.length > 0 && (
+        <div style={{ padding: "8px 12px", borderTop: "1px solid #e0e0e0", background: "#fafafa" }}>
+          {pendingFiles.map((d, i) => (
+            <YuklenenDosyaRozeti
+              key={i}
+              dosya={d}
+              onSil={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Input */}
       <form onSubmit={handleSubmit} className="input-area">
+        {/* Ataç butonu */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          multiple
+          onChange={handleFileSelect}
+          style={{ display: "none" }}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={loading}
+          style={{
+            border: "none", background: "transparent", cursor: "pointer",
+            fontSize: 22, padding: "0 8px", color: "#656d76",
+          }}
+          title="Dosya ekle (Excel/CSV)"
+        >
+          📎
+        </button>
         <input
           ref={inputRef}
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Bir şey söyleyin..."
+          placeholder={pendingFiles.length > 0 ? "Dosya hakkında istek yaz veya boş bırak..." : "Bir şey söyleyin..."}
           disabled={loading}
           className="chat-input"
         />
-        <button type="submit" disabled={loading || !input.trim()} className="send-btn">
+        <button
+          type="submit"
+          disabled={loading || (!input.trim() && pendingFiles.length === 0)}
+          className="send-btn"
+        >
           ↑
         </button>
       </form>
