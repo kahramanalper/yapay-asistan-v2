@@ -86,7 +86,8 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeProject, setActiveProject] = useState("");
-  const [pendingFiles, setPendingFiles] = useState([]); // gönderilmeyi bekleyen dosyalar
+  const [pendingFiles, setPendingFiles] = useState([]); // gönderilmeyi bekleyen dosyalar (ilk gönderim)
+  const [stickyFiles, setStickyFiles] = useState([]); // gönderildikten sonra sonraki mesajlarda da otomatik gider
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -132,20 +133,30 @@ export default function Chat() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if ((!input.trim() && pendingFiles.length === 0) || loading) return;
+    if ((!input.trim() && pendingFiles.length === 0 && stickyFiles.length === 0) || loading) return;
 
     const userText = input.trim() || (pendingFiles.length > 0 ? "Bu dosyayı yükle" : "");
-    const dosyalar = pendingFiles;
+    const yeniDosyalar = pendingFiles;
+
+    // Gönderilecek dosyalar = sticky + yeni
+    // Aynı isimli dosyalar varsa yeni olanı koru (kullanıcı yeniden yüklemiş olabilir)
+    const stickyAdlar = new Set(yeniDosyalar.map((d) => d.ad));
+    const filtrelenmisSticky = stickyFiles.filter((d) => !stickyAdlar.has(d.ad));
+    const gonderilecekDosyalar = [...filtrelenmisSticky, ...yeniDosyalar];
+
     setInput("");
     setPendingFiles([]);
+    // Gönderilen dosyalar sticky'ye geçer
+    setStickyFiles(gonderilecekDosyalar);
 
-    // Kullanıcı mesajını UI'a ekle (dosya rozetleriyle)
+    // Kullanıcı mesajını UI'a ekle
+    // Sadece YENİ yüklenen dosyaları kullanıcı mesajında göster (sticky tekrar gösterme kalabalık olur)
     const newMessages = [
       ...messages,
       {
         role: "user",
         content: userText,
-        ekDosyalar: dosyalar.map((d) => ({ ad: d.ad, boyut: d.boyut })),
+        ekDosyalar: yeniDosyalar.map((d) => ({ ad: d.ad, boyut: d.boyut })),
       },
     ];
     setMessages(newMessages);
@@ -163,7 +174,7 @@ export default function Chat() {
         body: JSON.stringify({
           messages: apiMessages,
           activeProject,
-          yuklenenDosyalar: dosyalar, // ← yeni alan
+          yuklenenDosyalar: gonderilecekDosyalar, // ← sticky + yeni
         }),
       });
 
@@ -284,9 +295,33 @@ export default function Chat() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Pending files (gönderilmeden önce) */}
+      {/* Sticky dosyalar (sohbet boyunca aktif) */}
+      {stickyFiles.length > 0 && (
+        <div style={{
+          padding: "8px 12px",
+          borderTop: "1px solid #e0e0e0",
+          background: "#fff8e1",
+          fontSize: 12,
+        }}>
+          <div style={{ color: "#856404", marginBottom: 4, fontSize: 11 }}>
+            📌 Aktif dosyalar (her mesajla gönderiliyor):
+          </div>
+          {stickyFiles.map((d, i) => (
+            <YuklenenDosyaRozeti
+              key={i}
+              dosya={d}
+              onSil={() => setStickyFiles((prev) => prev.filter((_, j) => j !== i))}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Pending files (yeni eklenen, henüz gönderilmemiş) */}
       {pendingFiles.length > 0 && (
-        <div style={{ padding: "8px 12px", borderTop: "1px solid #e0e0e0", background: "#fafafa" }}>
+        <div style={{ padding: "8px 12px", borderTop: "1px solid #e0e0e0", background: "#e8f5e9" }}>
+          <div style={{ color: "#2e7d32", marginBottom: 4, fontSize: 11 }}>
+            ➕ Yeni dosyalar (gönderildiğinde aktif olacak):
+          </div>
           {pendingFiles.map((d, i) => (
             <YuklenenDosyaRozeti
               key={i}
@@ -325,13 +360,19 @@ export default function Chat() {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={pendingFiles.length > 0 ? "Dosya hakkında istek yaz veya boş bırak..." : "Bir şey söyleyin..."}
+          placeholder={
+            pendingFiles.length > 0
+              ? "Dosya hakkında istek yaz veya boş bırak..."
+              : stickyFiles.length > 0
+              ? `${stickyFiles.length} dosya aktif. Bir şey söyleyin...`
+              : "Bir şey söyleyin..."
+          }
           disabled={loading}
           className="chat-input"
         />
         <button
           type="submit"
-          disabled={loading || (!input.trim() && pendingFiles.length === 0)}
+          disabled={loading || (!input.trim() && pendingFiles.length === 0 && stickyFiles.length === 0)}
           className="send-btn"
         >
           ↑
