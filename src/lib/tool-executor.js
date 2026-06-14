@@ -793,20 +793,24 @@ async function handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar) 
 }
 
 async function handleBomYukleOnayla({ dosyaAdi, projeAdi }, yuklenenDosyalar) {
-  const cacheKey = `${dosyaAdi}::${projeAdi}`;
-  let onizleme = _bomOnizlemeCache.get(cacheKey);
-
-  // Cache yoksa veya farklı invocation'sa, yeniden parse et
-  if (!onizleme) {
-    const yeni = await handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar);
-    if (!yeni.basarili) return yeni;
-    onizleme = _bomOnizlemeCache.get(cacheKey);
-    if (!onizleme) {
-      return { basarili: false, error: "Önizleme bulunamadı. Önce bom_yukle_onizleme çağrılmalı." };
-    }
+  // Cache'e güvenmiyoruz (Vercel serverless izolasyonu). Her seferde sıfırdan parse et.
+  // Frontend dosyayı sticky olarak gönderiyor, yani onayla aşamasında da dosya elimizde olmalı.
+  const onizleme = await handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar);
+  if (!onizleme.basarili) {
+    return {
+      basarili: false,
+      error: "Onaylama için dosya yeniden parse edilemedi: " + (onizleme.error || "bilinmeyen hata"),
+    };
   }
 
-  const kayitlar = onizleme.kayitlar;
+  // Cache'ten oku (handleBomYukleOnizleme cache'e yazdı)
+  const cacheKey = `${onizleme.dosyaAdi}::${projeAdi}`;
+  const veri = _bomOnizlemeCache.get(cacheKey);
+  if (!veri) {
+    return { basarili: false, error: "Önizleme verisi bulunamadı (cache hatası)." };
+  }
+
+  const kayitlar = veri.kayitlar;
   const sonuc = {
     basarili: true,
     projeAdi,
@@ -818,7 +822,6 @@ async function handleBomYukleOnayla({ dosyaAdi, projeAdi }, yuklenenDosyalar) {
   // Mevcut BOM'da o projedeki tüm parça numaralarını çek (mükerrer kontrolü için)
   let mevcutParcaNolar = new Set();
   try {
-    // proje adındaki tırnak ve özel karakterleri escape etmek için filtre Airtable formula
     const escProje = projeAdi.replace(/"/g, '\\"');
     const mevcutlar = await listRecords("BOM", {
       filterByFormula: `{Proje Adı}="${escProje}"`,
@@ -871,7 +874,7 @@ async function handleBomYukleOnayla({ dosyaAdi, projeAdi }, yuklenenDosyalar) {
     }
   }
 
-  // Cache'i temizle (başarıyla yazıldıysa)
+  // Cache'i temizle
   _bomOnizlemeCache.delete(cacheKey);
 
   sonuc.mesaj = `✅ ${sonuc.yazilan} kayıt BOM'a yazıldı.` +
