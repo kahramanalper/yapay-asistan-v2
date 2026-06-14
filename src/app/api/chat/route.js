@@ -71,6 +71,9 @@ export async function POST(request) {
     // Dosya çıktıları (Excel/PDF/Word) — frontend'e iletilecek
     const dosyalar = [];
 
+    // BOM yüklemesi başarılı olunca otomatik temizlenecek dosyalar
+    const dosyaTemizle = [];
+
     // Tool executor context (yüklenen dosyaları araçlara iletmek için)
     const toolCtx = { yuklenenDosyalar: yuklenenDosyalar || [] };
 
@@ -128,6 +131,18 @@ export async function POST(request) {
                 content: JSON.stringify(temizSonuc),
               });
               continue;
+            }
+
+            // BOM yükleme başarılı olursa o dosyayı frontend'e "temizle" diye işaretle
+            if (
+              block.name === "bom_yukle_onayla" &&
+              result?.basarili === true &&
+              result?.yazilan > 0
+            ) {
+              const ad = block.input?.dosyaAdi;
+              if (ad && !dosyaTemizle.includes(ad)) {
+                dosyaTemizle.push(ad);
+              }
             }
 
             toolResults.push({
@@ -216,6 +231,7 @@ export async function POST(request) {
       model,
       usage: response.usage,
       dosyalar, // ← Excel/PDF/Word çıktıları
+      dosyaTemizle, // ← Frontend stickyFiles'tan çıkaracak dosya adları
       debug, // ← Network sekmesinden görebileceksin
     });
   } catch (error) {
