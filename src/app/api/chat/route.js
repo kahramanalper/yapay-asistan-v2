@@ -33,7 +33,7 @@ function niyetVar(metin, kelimeler) {
 
 export async function POST(request) {
   try {
-    const { messages, activeProject } = await request.json();
+    const { messages, activeProject, yuklenenDosyalar } = await request.json();
 
     if (!messages || messages.length === 0) {
       return Response.json({ error: "Mesaj gerekli" }, { status: 400 });
@@ -51,6 +51,14 @@ export async function POST(request) {
       systemPrompt += `\n\n## AKTİF PROJE: ${activeProject}\nKullanıcı proje belirtmezse bu projeyi kullan.`;
     }
 
+    // Yüklenmiş dosya varsa Claude'a bilgi ver
+    if (yuklenenDosyalar && yuklenenDosyalar.length > 0) {
+      const dosyaListesi = yuklenenDosyalar
+        .map((d) => `- ${d.ad} (${(d.boyut / 1024).toFixed(1)} KB)`)
+        .join("\n");
+      systemPrompt += `\n\n## YÜKLENMİŞ DOSYALAR\nKullanıcı bu mesajla birlikte şu dosyaları yükledi:\n${dosyaListesi}\n\nEğer dosya bir BOM listesi (parça listesi, malzeme listesi, Excel/CSV) gibi görünüyorsa bom_yukle_onizleme aracını çağır. Önce projeAdi'nı netleştir (aktif proje varsa onu kullan, yoksa kullanıcıya sor).`;
+    }
+
     // ─────────────────────────────────────────────
     // DEBUG: Tüm araç çağrılarını burada topluyoruz
     // ─────────────────────────────────────────────
@@ -62,6 +70,9 @@ export async function POST(request) {
 
     // Dosya çıktıları (Excel/PDF/Word) — frontend'e iletilecek
     const dosyalar = [];
+
+    // Tool executor context (yüklenen dosyaları araçlara iletmek için)
+    const toolCtx = { yuklenenDosyalar: yuklenenDosyalar || [] };
 
     async function claudeCagir(msgs, forceTool = false) {
       return anthropic.messages.create({
@@ -91,7 +102,7 @@ export async function POST(request) {
           if (block.type === "tool_use") {
             let result;
             try {
-              result = await executeTool(block.name, block.input);
+              result = await executeTool(block.name, block.input, toolCtx);
             } catch (e) {
               result = { basarili: false, hata: e.message };
             }
