@@ -186,11 +186,23 @@ export default function Chat() {
           { role: "assistant", content: `⚠️ Hata: ${data.error}` },
         ]);
       } else {
+        // BOM yüklemesi başarılıysa o dosyayı sticky'den otomatik kaldır
+        let temizlenenAdlar = [];
+        if (data.dosyaTemizle && data.dosyaTemizle.length > 0) {
+          temizlenenAdlar = data.dosyaTemizle;
+          setStickyFiles((prev) => prev.filter((d) => !temizlenenAdlar.includes(d.ad)));
+        }
+
+        let mesaj = data.message;
+        if (temizlenenAdlar.length > 0) {
+          mesaj += `\n\n📌 İşlem tamamlandı, dosya otomatik kaldırıldı. Yeni dosya yüklemek için 📎`;
+        }
+
         setMessages([
           ...newMessages,
           {
             role: "assistant",
-            content: data.message,
+            content: mesaj,
             model: data.model,
             dosyalar: data.dosyalar || [],
           },
