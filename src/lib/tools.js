@@ -144,4 +144,42 @@ export const tools = [
       required: ["tip", "dosyaAdi"],
     },
   },
+  {
+    name: "bom_yukle_onizleme",
+    description:
+      "Kullanıcı bir Excel/CSV dosyası yüklediğinde (BOM listesi) onu parse edip ÖNİZLEME üretir. Henüz Airtable'a yazmaz. Kullanıcı yuklenenDosyalar listesinden bir dosya gönderdiyse ve içerik BOM gibi görünüyorsa bu aracı çağır. dosyaAdi parametresi: kullanıcının yüklediği dosyanın adı (yuklenenDosyalar listesindeki ad).",
+    input_schema: {
+      type: "object",
+      properties: {
+        dosyaAdi: {
+          type: "string",
+          description: "Yüklenen dosyanın adı (yuklenenDosyalar listesinden, ör: '1034-SK-3000-2026-01_ALT_MONTAJ_BOM_TABLOSU.xls')",
+        },
+        projeAdi: {
+          type: "string",
+          description: "BOM'un yazılacağı proje adı. Kullanıcıya sorulup alınmış olmalı.",
+        },
+      },
+      required: ["dosyaAdi", "projeAdi"],
+    },
+  },
+  {
+    name: "bom_yukle_onayla",
+    description:
+      "BOM yükleme önizlemesinden sonra kullanıcı onay verdiğinde Airtable BOM tablosuna toplu yazma yapar. Aynı Parça No + Proje varsa atlar ve uyarır. bom_yukle_onizleme'den sonra çağrılır.",
+    input_schema: {
+      type: "object",
+      properties: {
+        dosyaAdi: {
+          type: "string",
+          description: "Önizleme yapılan dosyanın adı (aynı dosya)",
+        },
+        projeAdi: {
+          type: "string",
+          description: "BOM'un yazılacağı proje adı (önizlemedekiyle aynı olmalı)",
+        },
+      },
+      required: ["dosyaAdi", "projeAdi"],
+    },
+  },
 ];
