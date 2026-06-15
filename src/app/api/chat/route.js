@@ -123,9 +123,9 @@ export async function POST(request) {
 
       try {
         const res = await anthropic.messages.create(payload);
-        dlog("INFO", "claudeCagir cevap → stop_reason:", res.stop_reason, "contentBlocks:", res.content.length, "blockTypes:", res.content.map((b) => b.type).join(","), "outputTokens:", res.usage?.output_tokens);
-        // Eğer text block varsa içeriğini de log'a düş (kısa keserek)
-        for (const b of res.content) {
+        const blocks = Array.isArray(res?.content) ? res.content : [];
+        dlog("INFO", "claudeCagir cevap → stop_reason:", res?.stop_reason, "contentBlocks:", blocks.length, "blockTypes:", blocks.map((b) => b.type).join(","), "outputTokens:", res?.usage?.output_tokens);
+        for (const b of blocks) {
           if (b.type === "text") {
             dlog("INFO", "text block:", b.text.slice(0, 200));
           } else if (b.type === "tool_use") {
@@ -140,7 +140,8 @@ export async function POST(request) {
           delete payload.tool_choice;
           try {
             const res2 = await anthropic.messages.create(payload);
-            dlog("INFO", "fallback cevap → stop_reason:", res2.stop_reason, "blockTypes:", res2.content.map((b) => b.type).join(","));
+            const blocks2 = Array.isArray(res2?.content) ? res2.content : [];
+            dlog("INFO", "fallback cevap → stop_reason:", res2?.stop_reason, "blockTypes:", blocks2.map((b) => b.type).join(","));
             return res2;
           } catch (e2) {
             dlog("ERROR", "fallback de başarısız:", e2.message);
@@ -155,6 +156,16 @@ export async function POST(request) {
       let response = ilkYanit;
       const allMessages = [...baslangicMesajlari];
       let maxIterations = 10;
+
+      // SAVUNMA: response veya response.content undefined olabilir mi?
+      if (!response) {
+        dlog("ERROR", "aracDongusu: response undefined geldi!");
+        return { content: [], stop_reason: "error", usage: {} };
+      }
+      if (!Array.isArray(response.content)) {
+        dlog("ERROR", "aracDongusu: response.content array değil:", typeof response.content, JSON.stringify(response).slice(0, 300));
+        return response;
+      }
 
       while (response.stop_reason === "tool_use" && maxIterations > 0) {
         maxIterations--;
@@ -228,7 +239,9 @@ export async function POST(request) {
     let response = await claudeCagir(messages);
     response = await aracDongusu(messages, response);
 
-    let textBlocks = response.content.filter((b) => b.type === "text");
+    // SAVUNMA: response.content undefined olursa boş array gibi davran
+    const safeContent = (r) => Array.isArray(r?.content) ? r.content : [];
+    let textBlocks = safeContent(response).filter((b) => b.type === "text");
     let assistantText = textBlocks.map((b) => b.text).join("\n");
 
     // ─────────────────────────────────────────────
@@ -303,7 +316,7 @@ export async function POST(request) {
       response = await claudeCagir(zorlaMesajlar, zorlanacakArac);
       response = await aracDongusu(zorlaMesajlar, response);
 
-      textBlocks = response.content.filter((b) => b.type === "text");
+      textBlocks = safeContent(response).filter((b) => b.type === "text");
       assistantText = textBlocks.map((b) => b.text).join("\n");
 
       // Zorlamaya rağmen hâlâ araç çağrılmadıysa → kullanıcıyı kandırma, dürüst ol
@@ -340,7 +353,15 @@ export async function POST(request) {
   } catch (error) {
     console.error("Chat API error:", error);
     return Response.json(
-      { error: "Bir hata oluştu: " + error.message },
+      {
+        error: "Bir hata oluştu: " + error.message,
+        // YENİ: hatanın kesin yerini görmek için stack ve detay
+        debug: {
+          hataMesaji: error.message,
+          hataAdi: error.name,
+          stack: error.stack ? error.stack.split("\n").slice(0, 8).join("\n") : "stack yok",
+        },
+      },
       { status: 500 }
     );
   }
