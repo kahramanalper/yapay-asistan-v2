@@ -39,12 +39,31 @@ function niyetVar(metin, kelimeler) {
 }
 
 export async function POST(request) {
+  // debug nesnesi try DIŞINDA — catch'te de erişebilelim
+  const debug = {
+    aracCagrilari: [],
+    zorlamaYapildi: false,
+    iterasyon: 0,
+    loglar: [],
+  };
+
+  function dlog(seviye, ...args) {
+    const mesaj = args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
+    const satir = `[${seviye}] ${mesaj}`;
+    debug.loglar.push(satir);
+    if (seviye === "ERROR") console.error(satir);
+    else if (seviye === "WARN") console.warn(satir);
+    else console.log(satir);
+  }
+
   try {
     const { messages, activeProject, yuklenenDosyalar } = await request.json();
 
     if (!messages || messages.length === 0) {
       return Response.json({ error: "Mesaj gerekli" }, { status: 400 });
     }
+
+    dlog("INFO", "POST başladı, mesaj sayısı:", messages.length);
 
     const lastUserMsg =
       typeof messages[messages.length - 1]?.content === "string"
@@ -67,24 +86,8 @@ export async function POST(request) {
     }
 
     // ─────────────────────────────────────────────
-    // DEBUG: Tüm araç çağrılarını burada topluyoruz
+    // (debug ve dlog POST fonksiyonu başında tanımlı — try DIŞINDA)
     // ─────────────────────────────────────────────
-    const debug = {
-      aracCagrilari: [], // { arac, girdi, sonucOzet, basarili }
-      zorlamaYapildi: false,
-      iterasyon: 0,
-      loglar: [], // Network'ten görmek için
-    };
-
-    // Helper: hem console'a hem debug.loglar'a yaz
-    function dlog(seviye, ...args) {
-      const mesaj = args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
-      const satir = `[${seviye}] ${mesaj}`;
-      debug.loglar.push(satir);
-      if (seviye === "ERROR") console.error(satir);
-      else if (seviye === "WARN") console.warn(satir);
-      else console.log(satir);
-    }
 
     // Dosya çıktıları (Excel/PDF/Word) — frontend'e iletilecek
     const dosyalar = [];
@@ -236,13 +239,17 @@ export async function POST(request) {
     }
 
     // ── 1. tur: normal çağrı ──
+    dlog("INFO", "1. tur çağrılıyor (serbest)");
     let response = await claudeCagir(messages);
+    dlog("INFO", "1. tur döndü, aracDongusu'na giriliyor");
     response = await aracDongusu(messages, response);
+    dlog("INFO", "aracDongusu bitti, iterasyon:", debug.iterasyon, "aracCagrilari:", debug.aracCagrilari.length);
 
     // SAVUNMA: response.content undefined olursa boş array gibi davran
     const safeContent = (r) => Array.isArray(r?.content) ? r.content : [];
     let textBlocks = safeContent(response).filter((b) => b.type === "text");
     let assistantText = textBlocks.map((b) => b.text).join("\n");
+    dlog("INFO", "assistantText uzunluk:", assistantText.length);
 
     // ─────────────────────────────────────────────
     // HALLÜSİNASYON KORUMASI
@@ -352,14 +359,15 @@ export async function POST(request) {
     });
   } catch (error) {
     console.error("Chat API error:", error);
+    debug.loglar.push(`[CATCH] ${error.name}: ${error.message}`);
     return Response.json(
       {
         error: "Bir hata oluştu: " + error.message,
-        // YENİ: hatanın kesin yerini görmek için stack ve detay
         debug: {
+          ...debug,
           hataMesaji: error.message,
           hataAdi: error.name,
-          stack: error.stack ? error.stack.split("\n").slice(0, 8).join("\n") : "stack yok",
+          stack: error.stack ? error.stack.split("\n").slice(0, 10).join("\n") : "stack yok",
         },
       },
       { status: 500 }
