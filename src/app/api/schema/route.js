@@ -14,9 +14,9 @@ const ISLEM_KELIMELERI = [
   "tamamlandı", "tamamlandi", "onayla", "bitti", "geldi", "gönder", "gonder",
 ];
 const SORGU_KELIMELERI = [
-  "neler var", "var mı", "var mi", "listele", "göster", "goster",
-  "kaç", "kac", "hangi", "kimler", "nedir", "ne durumda", "nerede",
-  "durumu", "listesi", "?",
+  "neler var", "neler", "var mı", "var mi", "listele", "göster", "goster",
+  "kaç", "kac", "hangi", "kimler", "kim ", "nedir", "ne durumda", "nerede",
+  "durumu", "listesi", "merak ediyorum", "öğren", "ogren", "anlat", "?",
 ];
 
 // Başarı iddiası tespiti — Claude bu kalıpları kullanıyorsa bir işlem yaptığını iddia ediyor
@@ -24,6 +24,13 @@ const BASARI_KALIPLARI = [
   "✅", "eklendi", "kaydedildi", "güncellendi", "guncellendi",
   "oluşturuldu", "olusturuldu", "silindi", "tamamlandı olarak",
   "değiştirildi", "degistirildi", "alındı olarak",
+];
+
+// Sahte tool call tespiti — Claude araç çağrısı yerine XML/JSON metin yazıyorsa
+const SAHTE_ARAC_KALIPLARI = [
+  "<call>", "</call>", "<tool>", "<function>", "</tool_use>",
+  "sorgu yapıyorum", "sorguluyorum", "çekiyorum...", "cekiyorum...",
+  "araç çağrısı yapıyorum", "arac cagrisi yapiyorum",
 ];
 
 function niyetVar(metin, kelimeler) {
@@ -77,28 +84,42 @@ export async function POST(request) {
     // Tool executor context (yüklenen dosyaları araçlara iletmek için)
     const toolCtx = { yuklenenDosyalar: yuklenenDosyalar || [] };
 
-    async function claudeCagir(msgs, forceTool = false) {
+    async function claudeCagir(msgs, forceToolName = null) {
+      // forceToolName: null = serbest, string = o aracı çağırmaya zorla, "any" = herhangi
       const payload = {
         model,
         max_tokens: 2048,
         system: systemPrompt,
-        tools, // tools her zaman gönderiliyor
+        tools, // her zaman gönderiliyor
         messages: msgs,
       };
-      // forceTool=true ise Claude'u araç çağırmaya zorla
-      // ÖNEMLİ: tool_choice.any sadece tools dolu ve API tarafında tanınmışsa çalışır.
-      // Bazen Vercel cold-start veya API edge case'lerinde "tool_choice.any may only be
-      // specified while providing tools" hatası alabiliyoruz. Bu yüzden hem tools'un
-      // dolu olduğunu kontrol ediyoruz hem de try/catch ile fallback yapıyoruz.
-      if (forceTool && tools && tools.length > 0) {
-        payload.tool_choice = { type: "any" };
+
+      // Tools'un yüklendiğinden emin ol
+      if (!tools || tools.length === 0) {
+        console.error("[CRITICAL] tools array boş! Import sorunu olabilir.");
+        return await anthropic.messages.create({
+          model, max_tokens: 2048, system: systemPrompt, messages: msgs,
+        });
       }
+
+      if (forceToolName === "any") {
+        payload.tool_choice = { type: "any" };
+      } else if (typeof forceToolName === "string" && forceToolName.length > 0) {
+        // Belirli aracı zorla — bu format API tarafından daha güvenilir kabul ediliyor
+        payload.tool_choice = { type: "tool", name: forceToolName };
+      }
+
+      console.log("[claudeCagir] model:", model, "tools:", tools.length, "forceToolName:", forceToolName, "msgCount:", msgs.length);
+
       try {
-        return await anthropic.messages.create(payload);
+        const res = await anthropic.messages.create(payload);
+        console.log("[claudeCagir] stop_reason:", res.stop_reason, "contentBlocks:", res.content.length, "blockTypes:", res.content.map((b) => b.type).join(","));
+        return res;
       } catch (e) {
-        // tool_choice hatası geldiyse: zorlamayı bırak, sadece normal çağrı yap.
-        // System mesajına eklenmiş olan zorlama metni Claude'u yine yönlendirecek.
-        if (forceTool && String(e.message || "").toLowerCase().includes("tool_choice")) {
+        console.error("[claudeCagir] HATA:", e.message);
+        // tool_choice hatası geldiyse: zorlamayı bırak, normal çağır
+        if (forceToolName && String(e.message || "").toLowerCase().includes("tool_choice")) {
+          console.warn("[claudeCagir] tool_choice fallback: zorlamayı kaldırıp tekrar deniyorum");
           delete payload.tool_choice;
           return await anthropic.messages.create(payload);
         }
@@ -195,21 +216,26 @@ export async function POST(request) {
     const sorguIstendi = niyetVar(lastUserMsg, SORGU_KELIMELERI);
     const aracCagrildi = debug.aracCagrilari.length > 0;
     const basariIddiasi = niyetVar(assistantText, BASARI_KALIPLARI);
+    // YENİ: Claude araç çağrısını metin olarak uydurdu mu? (XML, "sorguluyorum..." vb.)
+    const sahteAracCagrisi = niyetVar(assistantText, SAHTE_ARAC_KALIPLARI);
 
     const zorlamaGerekli =
       !aracCagrildi &&
-      ((islemIstendi && basariIddiasi) || sorguIstendi);
+      ((islemIstendi && basariIddiasi) || sorguIstendi || sahteAracCagrisi);
 
     if (zorlamaGerekli) {
       debug.zorlamaYapildi = true;
 
-      // Hangi araç çağrılmalı, açıkça söyle (Claude yön bulması için)
+      // Hangi aracın çağrılması gerek — ismen söyleyeceğiz
+      let zorlanacakArac = null; // null = "any"
       let aracYonlendirme = "";
       const msgLower = lastUserMsg.toLowerCase();
-      if (msgLower.includes("nerede") || msgLower.includes("durum")) {
+
+      if (msgLower.includes("nerede") || msgLower.includes(" durum")) {
+        zorlanacakArac = "parca_nerede";
         aracYonlendirme = "parca_nerede aracını çağır (parcaNo parametresi ver).";
-      } else if (sorguIstendi) {
-        // Sorgu — kayit_listele kullanılmalı, tablo adı mesajdan çıkarsanabilir
+      } else if (sorguIstendi || sahteAracCagrisi) {
+        zorlanacakArac = "kayit_listele";
         const tabloIpuclari = [
           { kelimeler: ["proje"], tablo: "Projeler" },
           { kelimeler: ["bom", "malzeme listesi", "parça listesi"], tablo: "BOM" },
@@ -228,27 +254,29 @@ export async function POST(request) {
         ];
         const eslesme = tabloIpuclari.find((t) => t.kelimeler.some((k) => msgLower.includes(k)));
         if (eslesme) {
-          aracYonlendirme = `kayit_listele aracını çağır: tablo="${eslesme.tablo}".`;
+          aracYonlendirme = `kayit_listele aracını ÇAĞIR. tablo parametresi: "${eslesme.tablo}".`;
         } else {
-          aracYonlendirme = "İlgili tablodan kayit_listele aracıyla veri çek.";
+          aracYonlendirme = "kayit_listele aracını ÇAĞIR ve uygun tablo adını ver.";
         }
       } else {
-        aracYonlendirme = "İlgili yazma aracını (kayit_olustur, durum_degistir vb.) çağır.";
+        zorlanacakArac = "any";
+        aracYonlendirme = "İlgili yazma aracını (kayit_olustur, durum_degistir vb.) ÇAĞIR.";
       }
+
+      console.log("[ZORLAMA] zorlanacakArac:", zorlanacakArac, "yonlendirme:", aracYonlendirme);
 
       const zorlaMesajlar = [
         ...messages,
         {
           role: "user",
           content:
-            "⚠️ SİSTEM UYARISI: Önceki cevabında araç çağırmadan metin ürettin — bu YASAK. " +
-            "Şimdi kullanıcının son isteğini GERÇEK araç çağrısıyla yap. " +
-            aracYonlendirme +
-            " Cevap olarak hiçbir açıklama yazma, doğrudan aracı çağır.",
+            "SİSTEM: Bir önceki cevabın araç çağırmadan üretildi, bu hatalı. " +
+            "Şimdi kullanıcının orijinal isteğini araç çağrısı ile yap. " +
+            aracYonlendirme,
         },
       ];
 
-      response = await claudeCagir(zorlaMesajlar, true);
+      response = await claudeCagir(zorlaMesajlar, zorlanacakArac);
       response = await aracDongusu(zorlaMesajlar, response);
 
       textBlocks = response.content.filter((b) => b.type === "text");
@@ -256,6 +284,7 @@ export async function POST(request) {
 
       // Zorlamaya rağmen hâlâ araç çağrılmadıysa → kullanıcıyı kandırma, dürüst ol
       if (debug.aracCagrilari.length === 0) {
+        console.error("[ZORLAMA BAŞARISIZ] tools:", tools.length, "stop_reason:", response.stop_reason, "content:", JSON.stringify(response.content).slice(0, 500));
         assistantText =
           "⚠️ İşlemi gerçekleştiremedim — sistem araç çağrısı yapamadı. " +
           "Lütfen komutu tekrar dene veya farklı şekilde yaz.";
