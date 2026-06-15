@@ -14,9 +14,9 @@ const ISLEM_KELIMELERI = [
   "tamamlandı", "tamamlandi", "onayla", "bitti", "geldi", "gönder", "gonder",
 ];
 const SORGU_KELIMELERI = [
-  "neler var", "var mı", "var mi", "listele", "göster", "goster",
-  "kaç", "kac", "hangi", "kimler", "nedir", "ne durumda", "nerede",
-  "durumu", "listesi", "?",
+  "neler var", "neler", "var mı", "var mi", "listele", "göster", "goster",
+  "kaç", "kac", "hangi", "kimler", "kim ", "nedir", "ne durumda", "nerede",
+  "durumu", "listesi", "merak ediyorum", "öğren", "ogren", "anlat", "?",
 ];
 
 // Başarı iddiası tespiti — Claude bu kalıpları kullanıyorsa bir işlem yaptığını iddia ediyor
@@ -24,6 +24,13 @@ const BASARI_KALIPLARI = [
   "✅", "eklendi", "kaydedildi", "güncellendi", "guncellendi",
   "oluşturuldu", "olusturuldu", "silindi", "tamamlandı olarak",
   "değiştirildi", "degistirildi", "alındı olarak",
+];
+
+// Sahte tool call tespiti — Claude araç çağrısı yerine XML/JSON metin yazıyorsa
+const SAHTE_ARAC_KALIPLARI = [
+  "<call>", "</call>", "<tool>", "<function>", "</tool_use>",
+  "sorgu yapıyorum", "sorguluyorum", "çekiyorum...", "cekiyorum...",
+  "araç çağrısı yapıyorum", "arac cagrisi yapiyorum",
 ];
 
 function niyetVar(metin, kelimeler) {
@@ -78,15 +85,32 @@ export async function POST(request) {
     const toolCtx = { yuklenenDosyalar: yuklenenDosyalar || [] };
 
     async function claudeCagir(msgs, forceTool = false) {
-      return anthropic.messages.create({
+      const payload = {
         model,
         max_tokens: 2048,
         system: systemPrompt,
-        tools,
-        // forceTool=true ise Claude araç çağırmak ZORUNDA (metin üretemez)
-        ...(forceTool ? { tool_choice: { type: "any" } } : {}),
+        tools, // tools her zaman gönderiliyor
         messages: msgs,
-      });
+      };
+      // forceTool=true ise Claude'u araç çağırmaya zorla
+      // ÖNEMLİ: tool_choice.any sadece tools dolu ve API tarafında tanınmışsa çalışır.
+      // Bazen Vercel cold-start veya API edge case'lerinde "tool_choice.any may only be
+      // specified while providing tools" hatası alabiliyoruz. Bu yüzden hem tools'un
+      // dolu olduğunu kontrol ediyoruz hem de try/catch ile fallback yapıyoruz.
+      if (forceTool && tools && tools.length > 0) {
+        payload.tool_choice = { type: "any" };
+      }
+      try {
+        return await anthropic.messages.create(payload);
+      } catch (e) {
+        // tool_choice hatası geldiyse: zorlamayı bırak, sadece normal çağrı yap.
+        // System mesajına eklenmiş olan zorlama metni Claude'u yine yönlendirecek.
+        if (forceTool && String(e.message || "").toLowerCase().includes("tool_choice")) {
+          delete payload.tool_choice;
+          return await anthropic.messages.create(payload);
+        }
+        throw e;
+      }
     }
 
     async function aracDongusu(baslangicMesajlari, ilkYanit) {
@@ -178,23 +202,58 @@ export async function POST(request) {
     const sorguIstendi = niyetVar(lastUserMsg, SORGU_KELIMELERI);
     const aracCagrildi = debug.aracCagrilari.length > 0;
     const basariIddiasi = niyetVar(assistantText, BASARI_KALIPLARI);
+    // YENİ: Claude araç çağrısını metin olarak uydurdu mu? (XML, "sorguluyorum..." vb.)
+    const sahteAracCagrisi = niyetVar(assistantText, SAHTE_ARAC_KALIPLARI);
 
     const zorlamaGerekli =
       !aracCagrildi &&
-      ((islemIstendi && basariIddiasi) || sorguIstendi);
+      ((islemIstendi && basariIddiasi) || sorguIstendi || sahteAracCagrisi);
 
     if (zorlamaGerekli) {
       debug.zorlamaYapildi = true;
 
-      // Claude'u araç çağırmaya zorla (tool_choice: any → metin üretemez)
+      // Hangi araç çağrılmalı, açıkça söyle (Claude yön bulması için)
+      let aracYonlendirme = "";
+      const msgLower = lastUserMsg.toLowerCase();
+      if (msgLower.includes("nerede") || msgLower.includes("durum")) {
+        aracYonlendirme = "parca_nerede aracını çağır (parcaNo parametresi ver).";
+      } else if (sorguIstendi) {
+        // Sorgu — kayit_listele kullanılmalı, tablo adı mesajdan çıkarsanabilir
+        const tabloIpuclari = [
+          { kelimeler: ["proje"], tablo: "Projeler" },
+          { kelimeler: ["bom", "malzeme listesi", "parça listesi"], tablo: "BOM" },
+          { kelimeler: ["satın al", "satin al", "sa "], tablo: "Satın Alma" },
+          { kelimeler: ["imalat", "üretim"], tablo: "İmalat" },
+          { kelimeler: ["kalite", "kk "], tablo: "Kalite Kontrol" },
+          { kelimeler: ["depo", "stok"], tablo: "Depo" },
+          { kelimeler: ["teklif"], tablo: "Teklifler" },
+          { kelimeler: ["tedarikçi", "tedarikci"], tablo: "Tedarikçiler" },
+          { kelimeler: ["görev", "gorev"], tablo: "Görevler" },
+          { kelimeler: ["not "], tablo: "Notlar" },
+          { kelimeler: ["bildirim"], tablo: "Bildirimler" },
+          { kelimeler: ["doküman", "dokuman"], tablo: "Dökümanlar" },
+          { kelimeler: ["test"], tablo: "Test" },
+          { kelimeler: ["müşteri", "musteri"], tablo: "Müşteriler" },
+        ];
+        const eslesme = tabloIpuclari.find((t) => t.kelimeler.some((k) => msgLower.includes(k)));
+        if (eslesme) {
+          aracYonlendirme = `kayit_listele aracını çağır: tablo="${eslesme.tablo}".`;
+        } else {
+          aracYonlendirme = "İlgili tablodan kayit_listele aracıyla veri çek.";
+        }
+      } else {
+        aracYonlendirme = "İlgili yazma aracını (kayit_olustur, durum_degistir vb.) çağır.";
+      }
+
       const zorlaMesajlar = [
         ...messages,
         {
           role: "user",
           content:
-            "SİSTEM UYARISI: Az önce araç çağırmadan cevap verdin. Bu yasak. " +
+            "⚠️ SİSTEM UYARISI: Önceki cevabında araç çağırmadan metin ürettin — bu YASAK. " +
             "Şimdi kullanıcının son isteğini GERÇEK araç çağrısıyla yap. " +
-            "Sorguysa airtable_sorgula, yazma işlemiyse ilgili yazma aracını kullan.",
+            aracYonlendirme +
+            " Cevap olarak hiçbir açıklama yazma, doğrudan aracı çağır.",
         },
       ];
 
