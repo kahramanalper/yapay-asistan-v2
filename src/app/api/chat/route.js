@@ -73,7 +73,18 @@ export async function POST(request) {
       aracCagrilari: [], // { arac, girdi, sonucOzet, basarili }
       zorlamaYapildi: false,
       iterasyon: 0,
+      loglar: [], // Network'ten görmek için
     };
+
+    // Helper: hem console'a hem debug.loglar'a yaz
+    function dlog(seviye, ...args) {
+      const mesaj = args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
+      const satir = `[${seviye}] ${mesaj}`;
+      debug.loglar.push(satir);
+      if (seviye === "ERROR") console.error(satir);
+      else if (seviye === "WARN") console.warn(satir);
+      else console.log(satir);
+    }
 
     // Dosya çıktıları (Excel/PDF/Word) — frontend'e iletilecek
     const dosyalar = [];
@@ -84,30 +95,57 @@ export async function POST(request) {
     // Tool executor context (yüklenen dosyaları araçlara iletmek için)
     const toolCtx = { yuklenenDosyalar: yuklenenDosyalar || [] };
 
-    async function claudeCagir(msgs, forceTool = false) {
+    async function claudeCagir(msgs, forceToolName = null) {
+      // forceToolName: null = serbest, string = o aracı çağırmaya zorla, "any" = herhangi
       const payload = {
         model,
         max_tokens: 2048,
         system: systemPrompt,
-        tools, // tools her zaman gönderiliyor
+        tools, // her zaman gönderiliyor
         messages: msgs,
       };
-      // forceTool=true ise Claude'u araç çağırmaya zorla
-      // ÖNEMLİ: tool_choice.any sadece tools dolu ve API tarafında tanınmışsa çalışır.
-      // Bazen Vercel cold-start veya API edge case'lerinde "tool_choice.any may only be
-      // specified while providing tools" hatası alabiliyoruz. Bu yüzden hem tools'un
-      // dolu olduğunu kontrol ediyoruz hem de try/catch ile fallback yapıyoruz.
-      if (forceTool && tools && tools.length > 0) {
-        payload.tool_choice = { type: "any" };
+
+      // Tools'un yüklendiğinden emin ol
+      if (!tools || tools.length === 0) {
+        dlog("ERROR", "tools array BOŞ! Import sorunu olabilir. tools:", tools);
+        return await anthropic.messages.create({
+          model, max_tokens: 2048, system: systemPrompt, messages: msgs,
+        });
       }
+
+      if (forceToolName === "any") {
+        payload.tool_choice = { type: "any" };
+      } else if (typeof forceToolName === "string" && forceToolName.length > 0) {
+        payload.tool_choice = { type: "tool", name: forceToolName };
+      }
+
+      dlog("INFO", "claudeCagir model:", model, "toolsCount:", tools.length, "forceToolName:", forceToolName || "none", "msgCount:", msgs.length, "tool_choice:", JSON.stringify(payload.tool_choice || "auto"));
+
       try {
-        return await anthropic.messages.create(payload);
+        const res = await anthropic.messages.create(payload);
+        dlog("INFO", "claudeCagir cevap → stop_reason:", res.stop_reason, "contentBlocks:", res.content.length, "blockTypes:", res.content.map((b) => b.type).join(","), "outputTokens:", res.usage?.output_tokens);
+        // Eğer text block varsa içeriğini de log'a düş (kısa keserek)
+        for (const b of res.content) {
+          if (b.type === "text") {
+            dlog("INFO", "text block:", b.text.slice(0, 200));
+          } else if (b.type === "tool_use") {
+            dlog("INFO", "tool_use block:", b.name, "input:", JSON.stringify(b.input).slice(0, 200));
+          }
+        }
+        return res;
       } catch (e) {
-        // tool_choice hatası geldiyse: zorlamayı bırak, sadece normal çağrı yap.
-        // System mesajına eklenmiş olan zorlama metni Claude'u yine yönlendirecek.
-        if (forceTool && String(e.message || "").toLowerCase().includes("tool_choice")) {
+        dlog("ERROR", "claudeCagir HATA:", e.message, "status:", e.status);
+        if (forceToolName && String(e.message || "").toLowerCase().includes("tool_choice")) {
+          dlog("WARN", "tool_choice fallback: zorlamayı kaldırıp tekrar deniyorum");
           delete payload.tool_choice;
-          return await anthropic.messages.create(payload);
+          try {
+            const res2 = await anthropic.messages.create(payload);
+            dlog("INFO", "fallback cevap → stop_reason:", res2.stop_reason, "blockTypes:", res2.content.map((b) => b.type).join(","));
+            return res2;
+          } catch (e2) {
+            dlog("ERROR", "fallback de başarısız:", e2.message);
+            throw e2;
+          }
         }
         throw e;
       }
@@ -212,13 +250,16 @@ export async function POST(request) {
     if (zorlamaGerekli) {
       debug.zorlamaYapildi = true;
 
-      // Hangi araç çağrılmalı, açıkça söyle (Claude yön bulması için)
+      // Hangi aracın çağrılması gerek — ismen söyleyeceğiz
+      let zorlanacakArac = null; // null = "any"
       let aracYonlendirme = "";
       const msgLower = lastUserMsg.toLowerCase();
-      if (msgLower.includes("nerede") || msgLower.includes("durum")) {
+
+      if (msgLower.includes("nerede") || msgLower.includes(" durum")) {
+        zorlanacakArac = "parca_nerede";
         aracYonlendirme = "parca_nerede aracını çağır (parcaNo parametresi ver).";
-      } else if (sorguIstendi) {
-        // Sorgu — kayit_listele kullanılmalı, tablo adı mesajdan çıkarsanabilir
+      } else if (sorguIstendi || sahteAracCagrisi) {
+        zorlanacakArac = "kayit_listele";
         const tabloIpuclari = [
           { kelimeler: ["proje"], tablo: "Projeler" },
           { kelimeler: ["bom", "malzeme listesi", "parça listesi"], tablo: "BOM" },
@@ -237,27 +278,29 @@ export async function POST(request) {
         ];
         const eslesme = tabloIpuclari.find((t) => t.kelimeler.some((k) => msgLower.includes(k)));
         if (eslesme) {
-          aracYonlendirme = `kayit_listele aracını çağır: tablo="${eslesme.tablo}".`;
+          aracYonlendirme = `kayit_listele aracını ÇAĞIR. tablo parametresi: "${eslesme.tablo}".`;
         } else {
-          aracYonlendirme = "İlgili tablodan kayit_listele aracıyla veri çek.";
+          aracYonlendirme = "kayit_listele aracını ÇAĞIR ve uygun tablo adını ver.";
         }
       } else {
-        aracYonlendirme = "İlgili yazma aracını (kayit_olustur, durum_degistir vb.) çağır.";
+        zorlanacakArac = "any";
+        aracYonlendirme = "İlgili yazma aracını (kayit_olustur, durum_degistir vb.) ÇAĞIR.";
       }
+
+      dlog("INFO", "ZORLAMA tetiklendi → zorlanacakArac:", zorlanacakArac, "yonlendirme:", aracYonlendirme);
 
       const zorlaMesajlar = [
         ...messages,
         {
           role: "user",
           content:
-            "⚠️ SİSTEM UYARISI: Önceki cevabında araç çağırmadan metin ürettin — bu YASAK. " +
-            "Şimdi kullanıcının son isteğini GERÇEK araç çağrısıyla yap. " +
-            aracYonlendirme +
-            " Cevap olarak hiçbir açıklama yazma, doğrudan aracı çağır.",
+            "SİSTEM: Bir önceki cevabın araç çağırmadan üretildi, bu hatalı. " +
+            "Şimdi kullanıcının orijinal isteğini araç çağrısı ile yap. " +
+            aracYonlendirme,
         },
       ];
 
-      response = await claudeCagir(zorlaMesajlar, true);
+      response = await claudeCagir(zorlaMesajlar, zorlanacakArac);
       response = await aracDongusu(zorlaMesajlar, response);
 
       textBlocks = response.content.filter((b) => b.type === "text");
@@ -265,6 +308,7 @@ export async function POST(request) {
 
       // Zorlamaya rağmen hâlâ araç çağrılmadıysa → kullanıcıyı kandırma, dürüst ol
       if (debug.aracCagrilari.length === 0) {
+        dlog("ERROR", "ZORLAMA BAŞARISIZ - toolsCount:", tools.length, "stop_reason:", response.stop_reason, "content:", JSON.stringify(response.content).slice(0, 500));
         assistantText =
           "⚠️ İşlemi gerçekleştiremedim — sistem araç çağrısı yapamadı. " +
           "Lütfen komutu tekrar dene veya farklı şekilde yaz.";
