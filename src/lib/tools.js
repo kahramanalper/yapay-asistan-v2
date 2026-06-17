@@ -855,6 +855,33 @@ function _rotaOlustur(imalUsulu, ekIslem) {
   return benzersiz.join(", ");
 }
 
+// "İmal Usulü" değerinden Sistem Tipi çöz (Airtable "İmal Usulü Eşleştirme" tablosundan).
+// imalUsulu kombine değer olabilir (örn: "Lazer Kesim/Büküm" veya "Talaşlı İmalat + Diş"):
+// önce tam değeri arar, sonra "/" "+" "," ile böler ve ilk eşleşeni alır.
+// Eşleşme yoksa null döner (çağıran fallback olarak _tipBelirle'ye düşer).
+function _imalUsuluTipiCoz(imalUsulu, mapLower) {
+  if (!imalUsulu || !mapLower || mapLower.size === 0) return null;
+  const raw = String(imalUsulu).trim();
+  if (!raw) return null;
+
+  // Önce tam değer
+  const tam = mapLower.get(raw.toLowerCase());
+  if (tam) return tam;
+
+  // Sonra parçalara böl
+  const parcalar = raw
+    .replace(/\r?\n/g, " ")
+    .split(/[\/+,]/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  for (const p of parcalar) {
+    const t = mapLower.get(p.toLowerCase());
+    if (t) return t;
+  }
+  return null;
+}
+
 // Parça No'dan Tip belirleme: Parça Kuralları tablosundan
 async function _tipBelirle(parcaNo, kurallar) {
   if (!parcaNo) return "Standart Parça";
@@ -977,6 +1004,18 @@ async function handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar) 
       parcaKurallari = await listRecords("Par\u00e7a Kurallar\u0131", {});
     } catch (e) { /* kurallar yoksa varsayılan kullanılır */ }
 
+    // YENİ: İmal Usulü Eşleştirme tablosunu çek → Excel Değeri → Sistem Tipi map'i
+    // Bu tablo: her firma kendi "İmal Usulü" değerlerini bizim Tip seçeneklerine eşleştirir.
+    const imalUsuluMap = new Map(); // lowercase("Lazer Kesim/Büküm") → "Lazer Kesim"
+    try {
+      const esler = await listRecords("\u0130mal Usul\u00fc E\u015fle\u015ftirme", {});
+      for (const e of esler) {
+        const exc = String(e["Excel De\u011feri"] || "").trim();
+        const sys = String(e["Sistem Tipi"] || "").trim();
+        if (exc && sys) imalUsuluMap.set(exc.toLowerCase(), sys);
+      }
+    } catch (e) { /* tablo yoksa map boş kalır, prefix'e düşer */ }
+
     // ÖĞE NO bazlı parça kayıtları
     const kayitlar = []; // { ogn, parcaNo, tanim, miktar, en, boy, yukseklik, cap, agirlik, malzeme, seviye, parentOgn, rota, imalUsulu, ekIslem, kutuk, tedarikci }
     for (const row of dataRows) {
@@ -1026,6 +1065,8 @@ async function handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar) 
     }
 
     // Her kayda Tip ve Üst Montaj ata
+    // YENİ: eşleşmeyen İmal Usulü değerlerini topla (önizlemede kullanıcıya gösterilecek)
+    const eslesmeyenImalUsulu = new Set();
     for (const k of kayitlar) {
       const altVarMi = (altKalemSayisi.get(k.ogn) || 0) > 0;
       if (altVarMi) {
@@ -1035,7 +1076,20 @@ async function handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar) 
         else if (k.seviye === 2) k.asama = "Üst Montaj";
         else k.asama = "Alt Montaj";
       } else {
-        k.tip = await _tipBelirle(k.parcaNo, parcaKurallari);
+        // YENİ: önce İmal Usulü Eşleştirme map'ine bak
+        let tip = null;
+        if (k.imalUsulu) {
+          tip = _imalUsuluTipiCoz(k.imalUsulu, imalUsuluMap);
+          if (!tip) {
+            // İmal Usulü dolu ama eşleşme yok → topla, raporda göster
+            eslesmeyenImalUsulu.add(k.imalUsulu);
+          }
+        }
+        // Map'ten çözülmediyse prefix kurallarına düş
+        if (!tip) {
+          tip = await _tipBelirle(k.parcaNo, parcaKurallari);
+        }
+        k.tip = tip;
         k.asama = null;
       }
       k.ustMontaj = k.parentOgn ? (ognToParca.get(k.parentOgn) || "") : "";
@@ -1051,6 +1105,7 @@ async function handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar) 
       parca: kayitlar.filter((k) => k.tip !== "Montaj").length,
       rotali: kayitlar.filter((k) => k.rota && k.rota.length > 0).length, // YENİ
       cokAsamali: kayitlar.filter((k) => k.rota && k.rota.includes(",")).length, // YENİ: 2+ aşamalı
+      eslesmeyenImalUsulu: Array.from(eslesmeyenImalUsulu), // YENİ: tabloda olmayan değerler
     };
 
     // İlk 5 ve son 5 satırın özeti
@@ -1083,6 +1138,9 @@ async function handleBomYukleOnizleme({ dosyaAdi, projeAdi }, yuklenenDosyalar) 
       cacheKey,
       mesaj: `${istatistik.toplam} satır okundu. ${istatistik.montaj} montaj, ${istatistik.parca} parça.` +
         (istatistik.cokAsamali > 0 ? ` ${istatistik.cokAsamali} parça çok aşamalı (rotalı).` : "") +
+        (istatistik.eslesmeyenImalUsulu.length > 0
+          ? ` ⚠️ ${istatistik.eslesmeyenImalUsulu.length} İmal Usulü değeri eşleştirme tablosunda bulunamadı: ${istatistik.eslesmeyenImalUsulu.slice(0, 5).join(", ")}${istatistik.eslesmeyenImalUsulu.length > 5 ? "..." : ""} (bu parçalara prefix'ten tip atandı).`
+          : "") +
         ` Onaylarsan ${projeAdi} projesine yazacağım.`,
     };
   } catch (err) {
