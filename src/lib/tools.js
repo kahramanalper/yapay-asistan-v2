@@ -7,6 +7,235 @@ import {
   deleteRecord,
 } from "./airtable.js";
 
+// ─────────────────────────────────────────────────────────────────────
+// ARAÇ TANIMLARI — Claude'a "şu araçları çağırabilirsin" diye bildirir.
+// route.js bu array'i Anthropic API'sine tool olarak gönderir.
+// executeTool fonksiyonu Claude bir aracı çağırdığında onu yerine getirir.
+// ─────────────────────────────────────────────────────────────────────
+export const tools = [
+  {
+    name: "kayit_listele",
+    description:
+      "Bir Airtable tablosundan kayıt listele. Sorgu/listeleme isteklerinde kullan (örn: 'projeler neler', 'BOM'u göster', 'satın almada neler var', 'kimler teklif verdi').",
+    input_schema: {
+      type: "object",
+      properties: {
+        tablo: {
+          type: "string",
+          description:
+            "Tablo adı. Geçerli değerler: Projeler, BOM, Satın Alma, İmalat, Kalite Kontrol, Depo, Teklifler, Tedarikçiler, Görevler, Notlar, Bildirimler, Dökümanlar, Test, Müşteriler, Kullanıcılar, Parça Kuralları, Tedarik Kuralları, İmalat Süre Arşivi, Sohbet Özetleri, TokenKullanim, Ayarlar",
+        },
+        filtre: {
+          type: "string",
+          description:
+            "Airtable formula filter (opsiyonel). Örn: \"{Proje Adı}='SK-2602'\" veya \"AND({Parça No}='T-104',{Durum}='Bekliyor')\".",
+        },
+        siralama: {
+          type: "array",
+          description: "Sıralama (opsiyonel). Örn: [{field:'Tarih',direction:'desc'}]",
+          items: { type: "object" },
+        },
+        maxKayit: {
+          type: "number",
+          description: "Maksimum kayıt sayısı (opsiyonel, varsayılan tüm kayıtlar). Genelde 20-50 yeterli.",
+        },
+        alanlar: {
+          type: "array",
+          description: "Sadece belirli alanları getir (opsiyonel). Örn: ['Parça No','Durum']",
+          items: { type: "string" },
+        },
+      },
+      required: ["tablo"],
+    },
+  },
+  {
+    name: "kayit_olustur",
+    description:
+      "Bir tabloya yeni kayıt ekle. İşlem isteklerinde kullan (örn: 'BOM'a T-104 ekle', 'teklif geldi 1500 TL', 'görev ata Ahmet'e'). Tek kayıt için 'alanlar', çoklu kayıt için 'cokluKayit' kullan.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tablo: { type: "string", description: "Tablo adı" },
+        alanlar: {
+          type: "object",
+          description:
+            "Yazılacak alanlar (tek kayıt için). Örn: {\"Parça No\":\"T-104\",\"Tanım\":\"Mil\",\"Tip\":\"Torna\",\"Miktar\":2,\"Proje Adı\":\"SK-2602\"}",
+        },
+        cokluKayit: {
+          type: "array",
+          description:
+            "Çoklu kayıt ekleme (opsiyonel). Her eleman bir 'fields' objesi içermeli: [{fields:{...}},{fields:{...}}]. 10'arlı batch otomatik.",
+          items: { type: "object" },
+        },
+      },
+      required: ["tablo"],
+    },
+  },
+  {
+    name: "kayit_guncelle",
+    description:
+      "Mevcut bir kaydı güncelle. kayitId varsa direkt o kayıt güncellenir; filtre varsa eşleşen tüm kayıtlar (en fazla 10) güncellenir.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tablo: { type: "string", description: "Tablo adı" },
+        kayitId: { type: "string", description: "Airtable record ID (opsiyonel, varsa filtre yerine kullanılır)" },
+        filtre: {
+          type: "string",
+          description:
+            "Airtable formula filter (opsiyonel, kayitId yerine). Örn: \"AND({Parça No}='T-104',{Proje Adı}='SK-2602')\"",
+        },
+        alanlar: {
+          type: "object",
+          description: "Güncellenecek alanlar. Örn: {\"Durum\":\"Tamamlandı\"}",
+        },
+      },
+      required: ["tablo", "alanlar"],
+    },
+  },
+  {
+    name: "kayit_sil",
+    description:
+      "Bir kaydı sil. DİKKAT: Geri alınamaz. Sadece kullanıcı açıkça silmek istediğinde ve onay verdiğinde kullan.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tablo: { type: "string", description: "Tablo adı" },
+        kayitId: { type: "string", description: "Silinecek Airtable record ID" },
+      },
+      required: ["tablo", "kayitId"],
+    },
+  },
+  {
+    name: "parca_nerede",
+    description:
+      "Bir parçanın 5 tablodan (BOM, Satın Alma, İmalat, Kalite Kontrol, Depo) birleşik durum sorgusu. 'T-104 nerede', 'X parçası ne durumda' gibi sorularda kullan.",
+    input_schema: {
+      type: "object",
+      properties: {
+        parcaNo: { type: "string", description: "Parça kodu (örn: T-104, HM-T-104, FESTO-DSBC-32)" },
+        projeAdi: {
+          type: "string",
+          description: "Proje adı (opsiyonel). Verilmezse tüm projelerde aranır.",
+        },
+      },
+      required: ["parcaNo"],
+    },
+  },
+  {
+    name: "isleme_al",
+    description:
+      "Bir parçayı imalata al. Tek komutla 4 işlem yapar: 1) BOM durumunu güncelle, 2) HM- hammadde kaydı oluştur, 3) Hammaddeyi Satın Alma'ya ekle, 4) İmalat kaydı aç. Tedarik Kuralları tablosuna bakar, yoksa Tip'e göre karar verir. 'T-104 imalata al', 'işleme başla' gibi komutlarda kullan.",
+    input_schema: {
+      type: "object",
+      properties: {
+        parcaNo: { type: "string", description: "Parça kodu (örn: T-104)" },
+        projeAdi: { type: "string", description: "Proje adı (zorunlu - hangi projeye ait)" },
+      },
+      required: ["parcaNo", "projeAdi"],
+    },
+  },
+  {
+    name: "durum_degistir",
+    description:
+      "Bir kaydın Durum alanını değiştir. Zincirleme tetiklemeleri otomatik yapar: SA 'Teslim Alındı' → KK kaydı + BOM güncelle + (hammadde ise) İmalat 'Devam Ediyor'. İmalat 'Tamamlandı' → KK kaydı + bitiş tarihi. KK 'Onaylandı' → Depo'ya giriş + BOM 'Depoda'. 'T-104 teslim alındı', 'imalat bitti', 'kalite onay' gibi komutlarda kullan.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tablo: {
+          type: "string",
+          description: "Hangi tabloda durum değişecek (Satın Alma, İmalat, Kalite Kontrol vb.)",
+        },
+        parcaNo: { type: "string", description: "Parça kodu" },
+        projeAdi: { type: "string", description: "Proje adı (opsiyonel)" },
+        yeniDurum: {
+          type: "string",
+          description:
+            "Yeni durum değeri. SA için: Teslim Alındı, Sipariş Verildi, İptal. İmalat için: Devam Ediyor, Tamamlandı, İptal. KK için: Onaylandı, Reddedildi.",
+        },
+        ekBilgi: {
+          type: "object",
+          description: "İsteğe bağlı ek alan güncellemeleri (örn: {\"Kontrol Eden\":\"Mehmet\"})",
+        },
+      },
+      required: ["tablo", "parcaNo", "yeniDurum"],
+    },
+  },
+  {
+    name: "dosya_olustur",
+    description:
+      "Excel, PDF veya Word dosyası oluştur ve kullanıcıya indirme bağlantısı ver. 'Excel olarak ver', 'PDF yap', 'Word'e aktar' gibi isteklerde kullan. Önce veriyi kayit_listele ile çek, sonra bu araçla dosyaya dönüştür.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tip: {
+          type: "string",
+          description: "Dosya tipi: 'excel', 'pdf' veya 'word'",
+        },
+        dosyaAdi: {
+          type: "string",
+          description: "Dosya adı (uzantısız). Örn: 'SK-2602-BOM'",
+        },
+        baslik: { type: "string", description: "Dokümanın başlığı (opsiyonel)" },
+        sutunlar: {
+          type: "array",
+          description: "Tablo başlık satırı (Excel/PDF/Word tablo için). Örn: ['Parça No','Tanım','Miktar']",
+          items: { type: "string" },
+        },
+        satirlar: {
+          type: "array",
+          description: "Tablo satırları (her satır array). Örn: [['T-104','Mil',2],['F-201','Plaka',1]]",
+          items: { type: "array" },
+        },
+        metin: {
+          type: "string",
+          description: "Düz metin içerik (Word için). Tablo değilse bunu kullan.",
+        },
+      },
+      required: ["tip", "dosyaAdi"],
+    },
+  },
+  {
+    name: "bom_yukle_onizleme",
+    description:
+      "Yüklenmiş bir Excel BOM dosyasını parse edip önizleme göster. Kullanıcı SolidWorks/Excel BOM dosyası yüklediğinde otomatik çağır. Yazma yapmaz, sadece içeriği analiz edip Tip, Üst Montaj, Rota hesaplar. Kullanıcı önizlemeyi onayladıktan sonra bom_yukle_onayla çağrılır.",
+    input_schema: {
+      type: "object",
+      properties: {
+        dosyaAdi: {
+          type: "string",
+          description: "Yüklenmiş dosyanın adı (örn: 'BOM-ATLAS-001.xlsx')",
+        },
+        projeAdi: {
+          type: "string",
+          description: "Hangi projeye yazılacak. Aktif proje varsa onu, yoksa kullanıcıya sor.",
+        },
+      },
+      required: ["dosyaAdi", "projeAdi"],
+    },
+  },
+  {
+    name: "bom_yukle_onayla",
+    description:
+      "Önizlemesi gösterilmiş BOM dosyasını gerçekten BOM tablosuna yaz. Kullanıcı 'onayla', 'yaz', 'devam' gibi onay verdikten sonra çağır. Mükerrer kontrolü yapılır (aynı Parça No + Proje varsa atlanır). 10'arlı batch ile yazar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        dosyaAdi: {
+          type: "string",
+          description: "Aynı önizlemedeki dosya adı",
+        },
+        projeAdi: {
+          type: "string",
+          description: "Önizlemedeki proje adı (aynı olmalı)",
+        },
+      },
+      required: ["dosyaAdi", "projeAdi"],
+    },
+  },
+];
+
+
 function resolveTableName(input) {
   const map = {
     projeler: "Projeler", proje: "Projeler",
