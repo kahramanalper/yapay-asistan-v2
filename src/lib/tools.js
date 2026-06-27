@@ -215,6 +215,19 @@ export const tools = [
     },
   },
   {
+    name: "depodan_cek",
+    description:
+      "Depodaki yarı mamul parçayı bir sonraki imalat aşamasına geçir. Kullanım: 'LT-205 depodan çek', 'LT-205 taşlamaya başla'. Depo miktarı 1 azalır, bekleyen İmalat aşaması 'Devam Ediyor' olur.",
+    input_schema: {
+      type: "object",
+      properties: {
+        parcaNo: { type: "string", description: "Parça kodu (örn: LT-205)" },
+        projeAdi: { type: "string", description: "Proje adı" },
+      },
+      required: ["parcaNo", "projeAdi"],
+    },
+  },
+  {
     name: "bom_yukle_onayla",
     description:
       "Önizlemesi gösterilmiş BOM dosyasını gerçekten BOM tablosuna yaz. Kullanıcı 'onayla', 'yaz', 'devam' gibi onay verdikten sonra çağır. Mükerrer kontrolü yapılır (aynı Parça No + Proje varsa atlanır). 10'arlı batch ile yazar.",
@@ -278,6 +291,7 @@ export async function executeTool(toolName, toolInput, ctx = {}) {
       case "dosya_olustur": return await handleDosyaOlustur(toolInput);
       case "bom_yukle_onizleme": return await handleBomYukleOnizleme(toolInput, ctx.yuklenenDosyalar);
       case "bom_yukle_onayla": return await handleBomYukleOnayla(toolInput, ctx.yuklenenDosyalar);
+      case "depodan_cek": return await handleDepodanCek(toolInput);
       default: return { basarili: false, error: "Bilinmeyen araç: " + toolName };
     }
   } catch (err) {
@@ -364,6 +378,20 @@ async function handleIslemeAl({ parcaNo, projeAdi }) {
   });
   if (bomRecords.length === 0) {
     return { basarili: false, error: parcaNo + " BOM'da bulunamadı (Proje: " + projeAdi + ")" };
+  }
+
+  // Değişiklik 3: Depo mükerrer üretim engeli
+  const _depKontrol = await listRecords("Depo", {
+    filterByFormula: `{Parça No}="${parcaNo}"`,
+  }).catch(() => []);
+  if (_depKontrol.length > 0 && (_depKontrol[0].Miktar || 0) > 0) {
+    const depRec = _depKontrol[0];
+    return {
+      basarili: false,
+      error:
+        "⚠️ " + parcaNo + " depoda mevcut (Aşama: " + (depRec["Aşama"] || "Depo") +
+        ", " + depRec.Miktar + " adet). Yeni üretim yerine '" + parcaNo + " depodan çek' ile devam edin.",
+    };
   }
 
   const bom = bomRecords[0];
@@ -579,25 +607,35 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
       "Ger\u00e7ek Biti\u015f": new Date().toISOString().split("T")[0],
     });
 
-    // Çok aşamalı Tip kontrolü: BOM'dan Tip oku, "&" varsa sonraki aşamayı başlat
-    const _bomFilter = proje
-      ? `AND({Par\u00e7a No}="${parcaNo}",{Proje Ad\u0131}="${proje}")`
-      : `{Par\u00e7a No}="${parcaNo}"`;
-    const _bomRecs = await listRecords("BOM", { filterByFormula: _bomFilter }).catch(() => []);
-    if (_bomRecs.length > 0) {
-      const bomTip = _bomRecs[0].Tip || "";
-      if (bomTip.includes("&")) {
-        const mevcutAsama = record["A\u015fama"] || "";
-        const sonrakiAsama = _sonrakiAsamaBul(bomTip, mevcutAsama);
-        if (sonrakiAsama) {
-          await createRecord("\u0130malat", {
-            "Par\u00e7a No": parcaNo,
-            "Tan\u0131m": record["Tan\u0131m"] || "",
-            "Proje Ad\u0131": proje,
-            "A\u015fama": sonrakiAsama,
-            Durum: "Hammadde Bekliyor",
-          });
-          results.adimlar.push("İmalat: " + sonrakiAsama + " aşaması açıldı (Hammadde Bekliyor)");
+    // Rota tabanlı çok aşamalı geçiş + Depo bilgilendirme
+    const _imalatBomFilter = proje
+      ? `AND({Parça No}="${parcaNo}",{Proje Adı}="${proje}")`
+      : `{Parça No}="${parcaNo}"`;
+    const _imalatBomRecs = await listRecords("BOM", { filterByFormula: _imalatBomFilter }).catch(() => []);
+    if (_imalatBomRecs.length > 0) {
+      const rota = _imalatBomRecs[0].Rota || "";
+      const mevcutAsama = record["Aşama"] || "";
+      const sonrakiAsama = _sonrakiAsamaBul(rota, mevcutAsama);
+      if (sonrakiAsama) {
+        await createRecord("İmalat", {
+          "Parça No": parcaNo,
+          "Tanım": record["Tanım"] || "",
+          "Proje Adı": proje,
+          "Aşama": sonrakiAsama,
+          Durum: "Hammadde Bekliyor",
+        });
+        results.adimlar.push("İmalat: " + sonrakiAsama + " aşaması açıldı (Hammadde Bekliyor)");
+
+        // Depo'da yarı mamul var mı bilgilendirme
+        const _depoRecs = await listRecords("Depo", {
+          filterByFormula: `{Parça No}="${parcaNo}"`,
+        }).catch(() => []);
+        if (_depoRecs.length > 0 && (_depoRecs[0].Miktar || 0) > 0) {
+          const depMiktar = _depoRecs[0].Miktar;
+          results.adimlar.push(
+            "💡 " + parcaNo + " depoda mevcut (Aşama: " + sonrakiAsama +
+            ", " + depMiktar + " adet). '" + parcaNo + " depodan çek' diyerek bu aşamayı hemen başlatılabilirsiniz."
+          );
         }
       }
     }
@@ -635,27 +673,62 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
   return results;
 }
 
-// Çok aşamalı Tip'te (örn. "Lazer&Freze") mevcut aşamadan sonrakini döndürür.
-// Son aşamadaysa veya Tip "&" içermiyorsa null döner.
-function _sonrakiAsamaBul(tip, mevcutAsama) {
-  const normMap = {
-    "lazer": "Lazer Kesim",
-    "lazer kesim": "Lazer Kesim",
-    "torna": "Torna",
-    "freze": "Freze",
-    "kaynak": "Kaynak",
-    "taşlama": "Taşlama",
-    "taşlama": "Taşlama",
-    "kaplama": "Kaplama",
-    "fason": "Fason",
-  };
-  const asamalar = tip.split("&").map((s) => {
-    const key = s.trim().toLowerCase();
-    return normMap[key] || s.trim();
-  });
+// Rota alanını "," ile bölerek mevcut aşamadan sonrakini döndürür.
+// Rota boş, tek aşamalı veya mevcut aşama son ise null döner.
+function _sonrakiAsamaBul(rota, mevcutAsama) {
+  if (!rota) return null;
+  const asamalar = rota.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (asamalar.length <= 1) return null;
   const idx = asamalar.findIndex((a) => a.toLowerCase() === (mevcutAsama || "").toLowerCase());
   if (idx < 0 || idx >= asamalar.length - 1) return null;
   return asamalar[idx + 1];
+}
+
+// ─────────────────────────────────────────────
+// DEPODAN ÇEK — yarı mamulü sonraki aşamaya geçir
+// ─────────────────────────────────────────────
+async function handleDepodanCek({ parcaNo, projeAdi }) {
+  // 1. Bekleyen İmalat kaydını bul
+  const imalatFilter = `AND({Par\u00e7a No}="${parcaNo}",{Proje Ad\u0131}="${projeAdi}",{Durum}="Hammadde Bekliyor")`;
+  const imalatRecs = await listRecords("\u0130malat", { filterByFormula: imalatFilter }).catch(() => []);
+  if (imalatRecs.length === 0) {
+    return { basarili: false, error: parcaNo + " i\u00e7in Hammadde Bekliyor durumunda \u0130malat kayd\u0131 yok (Proje: " + projeAdi + ")" };
+  }
+  const imalatRec = imalatRecs[0];
+  const asama = imalatRec["A\u015fama"] || "";
+
+  // 2. Depo'da kaydı bul
+  const depoRecs = await listRecords("Depo", { filterByFormula: `{Par\u00e7a No}="${parcaNo}"` }).catch(() => []);
+  if (depoRecs.length === 0) {
+    return { basarili: false, error: "Depo\'da " + parcaNo + " yok" };
+  }
+  const depoRec = depoRecs[0];
+  const mevcutMiktar = depoRec.Miktar || 0;
+
+  const adimlar = [];
+
+  // 3. Depo Miktar -1 (en az 0)
+  const yeniMiktar = Math.max(0, mevcutMiktar - 1);
+  await updateRecord("Depo", depoRec.id, {
+    Miktar: yeniMiktar,
+    "Son G\u00fcncelleme": new Date().toISOString().split("T")[0],
+  });
+  adimlar.push("Depo: " + parcaNo + " " + mevcutMiktar + " → " + yeniMiktar + " adet");
+
+  // 4. İmalat Durum = "Devam Ediyor"
+  await updateRecord("\u0130malat", imalatRec.id, { Durum: "Devam Ediyor" });
+  adimlar.push("\u0130malat: " + asama + " a\u015famas\u0131 Devam Ediyor");
+
+  // 5. Min Stok uyarısı
+  const minStok = depoRec["Min Stok"] || depoRec["Kritik Seviye"] || null;
+  if (minStok !== null && yeniMiktar < minStok) {
+    adimlar.push(
+      "\u26a0\ufe0f Stok kritik: " + parcaNo + " min=" + minStok + ", mevcut=" + yeniMiktar +
+      ". Yeniden \u00fcretim i\u00e7in '" + parcaNo + " i\u015fleme al' diyebilirsiniz."
+    );
+  }
+
+  return { basarili: true, adimlar };
 }
 
 // ─────────────────────────────────────────────
