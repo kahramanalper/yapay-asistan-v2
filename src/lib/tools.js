@@ -578,6 +578,29 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
     await updateRecord("\u0130malat", record.id, {
       "Ger\u00e7ek Biti\u015f": new Date().toISOString().split("T")[0],
     });
+
+    // Çok aşamalı Tip kontrolü: BOM'dan Tip oku, "&" varsa sonraki aşamayı başlat
+    const _bomFilter = proje
+      ? `AND({Par\u00e7a No}="${parcaNo}",{Proje Ad\u0131}="${proje}")`
+      : `{Par\u00e7a No}="${parcaNo}"`;
+    const _bomRecs = await listRecords("BOM", { filterByFormula: _bomFilter }).catch(() => []);
+    if (_bomRecs.length > 0) {
+      const bomTip = _bomRecs[0].Tip || "";
+      if (bomTip.includes("&")) {
+        const mevcutAsama = record["A\u015fama"] || "";
+        const sonrakiAsama = _sonrakiAsamaBul(bomTip, mevcutAsama);
+        if (sonrakiAsama) {
+          await createRecord("\u0130malat", {
+            "Par\u00e7a No": parcaNo,
+            "Tan\u0131m": record["Tan\u0131m"] || "",
+            "Proje Ad\u0131": proje,
+            "A\u015fama": sonrakiAsama,
+            Durum: "Hammadde Bekliyor",
+          });
+          results.adimlar.push("İmalat: " + sonrakiAsama + " aşaması açıldı (Hammadde Bekliyor)");
+        }
+      }
+    }
   }
 
   // KK "Onaylandı"
@@ -610,6 +633,29 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
   }
 
   return results;
+}
+
+// Çok aşamalı Tip'te (örn. "Lazer&Freze") mevcut aşamadan sonrakini döndürür.
+// Son aşamadaysa veya Tip "&" içermiyorsa null döner.
+function _sonrakiAsamaBul(tip, mevcutAsama) {
+  const normMap = {
+    "lazer": "Lazer Kesim",
+    "lazer kesim": "Lazer Kesim",
+    "torna": "Torna",
+    "freze": "Freze",
+    "kaynak": "Kaynak",
+    "taşlama": "Taşlama",
+    "taşlama": "Taşlama",
+    "kaplama": "Kaplama",
+    "fason": "Fason",
+  };
+  const asamalar = tip.split("&").map((s) => {
+    const key = s.trim().toLowerCase();
+    return normMap[key] || s.trim();
+  });
+  const idx = asamalar.findIndex((a) => a.toLowerCase() === (mevcutAsama || "").toLowerCase());
+  if (idx < 0 || idx >= asamalar.length - 1) return null;
+  return asamalar[idx + 1];
 }
 
 // ─────────────────────────────────────────────
