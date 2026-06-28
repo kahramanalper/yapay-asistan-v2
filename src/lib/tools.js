@@ -399,93 +399,13 @@ async function handleIslemeAl({ parcaNo, projeAdi }) {
   const results = { basarili: true, parcaNo, tip, adimlar: [] };
 
   // ─────────────────────────────────────────────
-  // 1. Tedarik Kuralları tablosundan Yöntem'i çöz
-  // ─────────────────────────────────────────────
-  let yontem = null;
-  try {
-    const kurallar = await listRecords("Tedarik Kurallar\u0131", {
-      filterByFormula: `{Tip}="${tip}"`,
-    });
-    if (kurallar.length > 0) {
-      yontem = kurallar[0]["Y\u00f6ntem"] || kurallar[0].Yontem || null;
-    }
-  } catch (e) {
-    // Tablo veya alan yoksa varsayılana düş
-  }
-
-  // Varsayılan: Tedarik Kuralı yoksa Tip'e göre karar
-  if (!yontem) {
-    if (tip === "Standart Parça") yontem = "Satın Alma";
-    else if (tip === "Montaj") yontem = "Montaj";
-    else yontem = "İmalat"; // Torna, Freze, Kaynak, Lazer Kesim, vb.
-  }
-
-  results.yontem = yontem;
-
-  // ─────────────────────────────────────────────
-  // YOL A — Yöntem: İmalat (Torna, Freze, Kaynak, Lazer Kesim...)
-  // ─────────────────────────────────────────────
-  if (yontem === "\u0130malat" || yontem === "İmalat" || yontem === "Imalat") {
-    // 1. BOM durumu → İmalatta
-    await updateRecord("BOM", bom.id, { Durum: "\u0130malatta" });
-    results.adimlar.push("BOM: İmalatta");
-
-    // 2. HM- kaydı BOM'a ekle
-    const hmNo = "HM-" + parcaNo;
-    await createRecord("BOM", {
-      "Par\u00e7a No": hmNo,
-      "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
-      Tip: "Hammadde",
-      Miktar: bom.Miktar || 1,
-      Malzeme: bom.Malzeme || "",
-      Durum: "Sat\u0131n Almada",
-      "Proje Ad\u0131": projeAdi,
-    });
-    results.adimlar.push("BOM'a " + hmNo + " eklendi");
-
-    // 3. HM- SA'ya ekle
-    await createRecord("Sat\u0131n Alma", {
-      "Par\u00e7a No": hmNo,
-      "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
-      Miktar: bom.Miktar || 1,
-      Durum: "Bekliyor",
-      "Proje Ad\u0131": projeAdi,
-      Kaynak: "BOM",
-    });
-    results.adimlar.push("SA'ya " + hmNo + " eklendi: Bekliyor");
-
-    // 4. İmalat kaydı aç — aşamayı Tip'ten çöz
-    let asama = "Torna"; // varsayılan
-    const tipLower = tip.toLowerCase();
-    if (tipLower.includes("freze") && !tipLower.includes("torna")) asama = "Freze";
-    else if (tipLower.includes("torna") && tipLower.includes("freze")) asama = "Torna"; // Torna&Freze → önce Torna
-    else if (tipLower.includes("lazer")) asama = "Lazer Kesim";
-    else if (tipLower.includes("kaynak")) asama = "Kaynak";
-    else if (tipLower.includes("torna")) asama = "Torna";
-    else if (tipLower.includes("ta\u015flama")) asama = "Taşlama";
-
-    await createRecord("\u0130malat", {
-      "Par\u00e7a No": parcaNo,
-      "Tan\u0131m": bom["Tan\u0131m"] || "",
-      "Proje Ad\u0131": projeAdi,
-      "A\u015fama": asama,
-      Durum: "Hammadde Bekliyor",
-    });
-    results.adimlar.push("İmalat kaydı: Hammadde Bekliyor (" + asama + ")");
-
-    return results;
-  }
-
-  // ─────────────────────────────────────────────
-  // YOL B — Yöntem: Satın Alma (Standart Parça)
+  // YOL B — Tip: Standart Parça
   // Hammadde yok, İmalat kaydı yok. Sadece SA'ya direkt parça.
   // ─────────────────────────────────────────────
-  if (yontem === "Sat\u0131n Alma" || yontem === "Satın Alma" || yontem === "Satin Alma") {
-    // 1. BOM durumu → Satın Almada
+  if (tip === "Standart Parça") {
     await updateRecord("BOM", bom.id, { Durum: "Sat\u0131n Almada" });
-    results.adimlar.push("BOM: Satın Almada");
+    results.adimlar.push("BOM: Sat\u0131n Almada");
 
-    // 2. SA tablosunda zaten var mı kontrol et
     const mevcutSA = await listRecords("Sat\u0131n Alma", {
       filterByFormula: `AND({Parça No}="${parcaNo}",{Proje Adı}="${projeAdi}")`,
     }).catch(() => []);
@@ -493,7 +413,6 @@ async function handleIslemeAl({ parcaNo, projeAdi }) {
     if (mevcutSA.length > 0) {
       results.adimlar.push("SA'da " + parcaNo + " zaten var, atlandı");
     } else {
-      // 3. SA'ya direkt parça (hammadde değil, parça)
       await createRecord("Sat\u0131n Alma", {
         "Par\u00e7a No": parcaNo,
         "Tan\u0131m": bom["Tan\u0131m"] || "",
@@ -512,12 +431,10 @@ async function handleIslemeAl({ parcaNo, projeAdi }) {
   // YOL C — Tip: Montaj
   // Hammadde yok, SA yok. Sadece BOM ve İmalat kaydı.
   // ─────────────────────────────────────────────
-  if (yontem === "Montaj" || tip === "Montaj") {
-    // 1. BOM durumu → İmalatta (montaj da bir tür imalat)
+  if (tip === "Montaj") {
     await updateRecord("BOM", bom.id, { Durum: "\u0130malatta" });
-    results.adimlar.push("BOM: İmalatta");
+    results.adimlar.push("BOM: \u0130malatta");
 
-    // 2. İmalat kaydı aç (varsayılan Alt Montaj — kullanıcı sonra değiştirebilir)
     await createRecord("\u0130malat", {
       "Par\u00e7a No": parcaNo,
       "Tan\u0131m": bom["Tan\u0131m"] || "",
@@ -525,17 +442,78 @@ async function handleIslemeAl({ parcaNo, projeAdi }) {
       "A\u015fama": "Alt Montaj",
       Durum: "Bekliyor",
     });
-    results.adimlar.push("İmalat kaydı: Bekliyor (Alt Montaj)");
+    results.adimlar.push("\u0130malat kayd\u0131: Bekliyor (Alt Montaj)");
 
     return results;
   }
 
-  // Bilinmeyen yöntem
-  return {
-    basarili: false,
-    error: `Bilinmeyen yöntem: "${yontem}". Tedarik Kuralları tablosunda Tip="${tip}" için Yöntem (İmalat/Satın Alma/Montaj) tanımlı değil.`,
-    tip, yontem,
-  };
+  // ─────────────────────────────────────────────
+  // YOL A — Üretim (+ eski tip değerleri: Torna/Freze/Kaynak/Lazer/& vb.)
+  // BOM→İmalatta, HM- kaydı, SA'ya hammadde, İmalat kaydı (Hammadde Bekliyor)
+  // ─────────────────────────────────────────────
+
+  // \u0130\u015flem Rotas\u0131'n\u0131 BOM'dan oku, yoksa Par\u00e7a Kurallar\u0131'ndan \u00e7\u00f6z
+  let islemRotasi = bom["\u0130\u015flem Rotas\u0131"] || bom.Rota || "";
+  if (!islemRotasi) {
+    let parcaKurallari = [];
+    try {
+      parcaKurallari = await listRecords("Par\u00e7a Kurallar\u0131", {});
+    } catch (e) { /* tabloya eri\u015filemiyor */ }
+    islemRotasi = await _islemRotasiBelirle(parcaNo, parcaKurallari);
+  }
+  if (!islemRotasi) {
+    return {
+      basarili: false,
+      error:
+        "\u26a0\ufe0f " + parcaNo + " i\u00e7in \u0130\u015flem Rotas\u0131 belirlenemedi. " +
+        "BOM'da '\u0130\u015flem Rotas\u0131' alan\u0131n\u0131 doldurun veya " +
+        "Par\u00e7a Kurallar\u0131 tablosuna kural ekleyin (Tip=\u00dcretim, \u0130\u015flem Rotas\u0131=Torna vb.).",
+    };
+  }
+
+  // \u0130lk a\u015famas\u0131 al
+  const asamalar = islemRotasi.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const asama = asamalar[0] || "Torna";
+
+  // 1. BOM durumu → \u0130malatta
+  await updateRecord("BOM", bom.id, { Durum: "\u0130malatta" });
+  results.adimlar.push("BOM: \u0130malatta");
+
+  // 2. HM- kayd\u0131 BOM'a ekle
+  const hmNo = "HM-" + parcaNo;
+  await createRecord("BOM", {
+    "Par\u00e7a No": hmNo,
+    "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
+    Tip: "Hammadde",
+    Miktar: bom.Miktar || 1,
+    Malzeme: bom.Malzeme || "",
+    Durum: "Sat\u0131n Almada",
+    "Proje Ad\u0131": projeAdi,
+  });
+  results.adimlar.push("BOM'a " + hmNo + " eklendi");
+
+  // 3. HM- SA'ya ekle
+  await createRecord("Sat\u0131n Alma", {
+    "Par\u00e7a No": hmNo,
+    "Tan\u0131m": (bom["Tan\u0131m"] || parcaNo) + " Hammaddesi",
+    Miktar: bom.Miktar || 1,
+    Durum: "Bekliyor",
+    "Proje Ad\u0131": projeAdi,
+    Kaynak: "BOM",
+  });
+  results.adimlar.push("SA'ya " + hmNo + " eklendi: Bekliyor");
+
+  // 4. \u0130malat kayd\u0131 a\u00e7 — ilk a\u015fama \u0130\u015flem Rotas\u0131'ndan
+  await createRecord("\u0130malat", {
+    "Par\u00e7a No": parcaNo,
+    "Tan\u0131m": bom["Tan\u0131m"] || "",
+    "Proje Ad\u0131": projeAdi,
+    "A\u015fama": asama,
+    Durum: "Hammadde Bekliyor",
+  });
+  results.adimlar.push("\u0130malat kayd\u0131: Hammadde Bekliyor (" + asama + ")");
+
+  return results;
 }
 
 async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilgi }) {
@@ -613,9 +591,10 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
       : `{Parça No}="${parcaNo}"`;
     const _imalatBomRecs = await listRecords("BOM", { filterByFormula: _imalatBomFilter }).catch(() => []);
     if (_imalatBomRecs.length > 0) {
-      const rota = _imalatBomRecs[0].Rota || "";
+      const islemRotasi = _imalatBomRecs[0]["\u0130\u015flem Rotas\u0131"] || _imalatBomRecs[0].Rota || "";
+      const bomTip = _imalatBomRecs[0].Tip || "";
       const mevcutAsama = record["Aşama"] || "";
-      const sonrakiAsama = _sonrakiAsamaBul(rota, mevcutAsama);
+      const sonrakiAsama = _sonrakiAsamaBul(islemRotasi, bomTip, mevcutAsama);
       if (sonrakiAsama) {
         await createRecord("İmalat", {
           "Parça No": parcaNo,
@@ -673,11 +652,13 @@ async function handleDurumDegistir({ tablo, parcaNo, projeAdi, yeniDurum, ekBilg
   return results;
 }
 
-// Rota alanını "," ile bölerek mevcut aşamadan sonrakini döndürür.
-// Rota boş, tek aşamalı veya mevcut aşama son ise null döner.
-function _sonrakiAsamaBul(rota, mevcutAsama) {
-  if (!rota) return null;
-  const asamalar = rota.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+// \u0130\u015flem Rotas\u0131'n\u0131 "," ile bölerek mevcut aşamadan sonrakini döndürür.
+// \u0130\u015flem Rotas\u0131 boşsa BOM Tip'indeki "&" ile fallback yapar.
+// Boş, tek aşamalı veya mevcut aşama son ise null döner.
+function _sonrakiAsamaBul(islemRotasi, bomTip, mevcutAsama) {
+  const kaynak = islemRotasi || (bomTip && bomTip.includes("&") ? bomTip.replace(/&/g, ",") : "");
+  if (!kaynak) return null;
+  const asamalar = kaynak.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
   if (asamalar.length <= 1) return null;
   const idx = asamalar.findIndex((a) => a.toLowerCase() === (mevcutAsama || "").toLowerCase());
   if (idx < 0 || idx >= asamalar.length - 1) return null;
@@ -1034,6 +1015,27 @@ async function _tipBelirle(parcaNo, kurallar) {
   return "Standart Parça";
 }
 
+// Par\u00e7a No'dan \u0130\u015flem Rotas\u0131 belirleme: Par\u00e7a Kurallar\u0131 tablosundan
+async function _islemRotasiBelirle(parcaNo, kurallar) {
+  if (!parcaNo || !kurallar || kurallar.length === 0) return "";
+  const temizPN = parcaNo.trim();
+  const sirali = [...kurallar].sort((a, b) => (b.Desen || "").length - (a.Desen || "").length);
+  for (const k of sirali) {
+    const desen = k.Desen || "";
+    const konum = (k.Konum || "ba\u015flang\u0131\u00e7").toLowerCase();
+    if (!desen) continue;
+    if (konum === "varsay\u0131lan" || desen === "*") continue;
+    if (konum.includes("regex")) {
+      try {
+        if (new RegExp(desen).test(temizPN)) return k["\u0130\u015flem Rotas\u0131"] || "";
+      } catch (e) { /* geçersiz regex */ }
+    } else {
+      if (temizPN.startsWith(desen)) return k["\u0130\u015flem Rotas\u0131"] || "";
+    }
+  }
+  return "";
+}
+
 // Excel/CSV base64'ten satırları parse et
 async function _excelParse(base64, dosyaAdi) {
   const XLSX = await import("xlsx");
@@ -1334,8 +1336,8 @@ async function handleBomYukleOnayla({ dosyaAdi, projeAdi }, yuklenenDosyalar) {
     if (k.cap !== null) alanlar["\u00c7ap"] = k.cap;
     if (k.agirlik !== null) alanlar["A\u011f\u0131rl\u0131k"] = k.agirlik;
     if (k.ustMontaj) alanlar["\u00dcst Montaj"] = k.ustMontaj;
-    // YENİ: Rota alanını yaz (BOM tablosunda Rota alanı olmalı, Long text)
-    if (k.rota) alanlar.Rota = k.rota;
+    // \u0130\u015flem Rotas\u0131 alan\u0131n\u0131 yaz
+    if (k.rota) alanlar["\u0130\u015flem Rotas\u0131"] = k.rota;
     yazilacaklar.push(alanlar);
   }
 
