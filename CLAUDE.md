@@ -22,12 +22,12 @@ Bu proje makine imalat sektörü için doğal dil ile çalışan bir yapay asist
 ## Çalışma Kuralları
 1. **Dil:** Türkçe yaz, sade dil, kısa cevap.
 2. **Airtable alan adlarında Unicode dikkat:**
-   - `İmalat` → `İmalat` (büyük İ)
-   - `Satın Alma` → `Satın Alma` (küçük ı)
-   - `Parça` → `Parça`
-   - `Dökümanlar` → `Dökümanlar`
-   - `Görevler` → `Görevler`
-   - `Tedarikçiler` → `Tedarikçiler`
+   - `İmalat` → `\u0130malat` (büyük İ)
+   - `Satın Alma` → `Sat\u0131n Alma` (küçük ı)
+   - `Parça` → `Par\u00e7a`
+   - `Dökümanlar` → `D\u00f6k\u00fcmanlar`
+   - `Görevler` → `G\u00f6revler`
+   - `Tedarikçiler` → `Tedarik\u00e7iler`
 3. **Hallüsinasyon yasak:** ASLA araç çağırmadan "kaydedildi" / "güncellendi" deme. Her yazma işlemi gerçek Airtable API çağrısıyla yapılmalı. Her tool sonucu `basarili: true/false` döndürür.
 4. **Mükerrer kontrolü:** BOM, SA, İmalat tablolarına kayıt eklerken aynı Parça No + Proje varsa atla.
 5. **10'arlı batch:** Airtable API limiti nedeniyle toplu işlemler 10'arlı PATCH/POST ile.
